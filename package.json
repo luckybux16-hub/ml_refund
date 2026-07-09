@@ -1,0 +1,20 @@
+{
+  "name": "ml_refund",
+  "version": "1.0.0",
+  "description": "MOOW / LEXIE refund CRM",
+  "scripts": {
+    "check": "node --check api/config.js",
+    "bootstrap:admin": "node scripts/bootstrap-admin.mjs"
+  },
+  "keywords": [
+    "crm",
+    "supabase",
+    "vercel"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.110.2"
+  }
+}
