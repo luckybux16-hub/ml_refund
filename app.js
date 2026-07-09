@@ -1,4 +1,5 @@
 const STORAGE_KEY = "moow_lexie_crm_v1";
+const AUTH_TOKEN_KEY = "moow_lexie_auth_token";
 
 const ROLES = {
   warehouse: "Склад",
@@ -64,6 +65,7 @@ const app = document.querySelector("#app");
 
 let state = loadState();
 let sessionUserId = localStorage.getItem("moow_lexie_session");
+let authToken = localStorage.getItem(AUTH_TOKEN_KEY) || "";
 let view = { page: "dashboard", selectedId: null, filter: {}, mine: false, tab: "tickets" };
 let toastTimer = null;
 let remoteConfigPromise = null;
@@ -103,6 +105,10 @@ function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
+function isRemoteSession() {
+  return Boolean(authToken);
+}
+
 async function getRemoteConfig() {
   if (!remoteConfigPromise) {
     remoteConfigPromise = fetch("/api/config")
@@ -132,6 +138,133 @@ function profileToUser(profile) {
   };
 }
 
+function userFromApi(user) {
+  return {
+    id: user.id,
+    login: user.login,
+    password: "",
+    name: user.name,
+    role: user.role,
+    brands: user.brands || BRANDS,
+    active: user.active !== false,
+  };
+}
+
+function ticketFromApi(ticket, comments = []) {
+  return {
+    id: ticket.id,
+    crmId: ticket.crm_id || "",
+    status: ticket.status,
+    brand: ticket.brand,
+    type: ticket.type,
+    orderNumber: ticket.order_number || "",
+    warehouseFop: ticket.warehouse_fop || "",
+    returnedProduct: ticket.returned_product || "",
+    returnAmount: Number(ticket.return_amount || 0),
+    deliveryPaid: ticket.delivery_paid || "",
+    deliveryDeduction: Number(ticket.delivery_deduction || 0),
+    photoSent: Boolean(ticket.photo_sent),
+    warehouseComment: ticket.warehouse_comment || "",
+    managerFop: ticket.manager_fop || "",
+    orderDate: ticket.order_date || "",
+    orderTime: ticket.order_time || "",
+    clientName: ticket.client_name || "",
+    reason: ticket.reason || "",
+    otherReasonComment: ticket.other_reason_comment || "",
+    paymentMethod: ticket.payment_method || "",
+    iban: ticket.iban || "",
+    taxId: ticket.tax_id || "",
+    receiverName: ticket.receiver_name || "",
+    paymentPurpose: ticket.payment_purpose || "",
+    managerComment: ticket.manager_comment || "",
+    stockOfferConfirmed: Boolean(ticket.stock_offer_confirmed),
+    mainCrmReturnStatus: Boolean(ticket.main_crm_return_status),
+    newProduct: ticket.new_product || "",
+    newProductPrice: Number(ticket.new_product_price || 0),
+    exchangeResult: ticket.exchange_result || "",
+    clientExtraPayment: Number(ticket.client_extra_payment || 0),
+    exchangeRefundAmount: Number(ticket.exchange_refund_amount || 0),
+    checklist: ticket.checklist || {},
+    comments,
+    createdAt: ticket.created_at || nowIso(),
+    updatedAt: ticket.updated_at || nowIso(),
+    warehouseUserId: ticket.warehouse_user_id || "",
+    managerUserId: ticket.manager_user_id || "",
+    reviewerUserId: ticket.reviewer_user_id || "",
+    accountantUserId: ticket.accountant_user_id || "",
+    updatedBy: ticket.updated_by || "",
+    paidAt: ticket.paid_at || "",
+  };
+}
+
+function ticketToApi(ticket) {
+  return {
+    id: ticket.id,
+    crm_id: ticket.crmId || null,
+    brand: ticket.brand,
+    type: ticket.type,
+    status: ticket.status,
+    order_number: ticket.orderNumber || "",
+    warehouse_fop: ticket.warehouseFop || "",
+    returned_product: ticket.returnedProduct || "",
+    return_amount: Number(ticket.returnAmount || 0),
+    delivery_paid: ticket.deliveryPaid || "",
+    delivery_deduction: Number(ticket.deliveryDeduction || 0),
+    photo_sent: Boolean(ticket.photoSent),
+    warehouse_comment: ticket.warehouseComment || "",
+    manager_fop: ticket.managerFop || "",
+    order_date: ticket.orderDate || "",
+    order_time: ticket.orderTime || "",
+    client_name: ticket.clientName || "",
+    reason: ticket.reason || "",
+    other_reason_comment: ticket.otherReasonComment || "",
+    payment_method: ticket.paymentMethod || "",
+    iban: ticket.iban || "",
+    tax_id: ticket.taxId || "",
+    receiver_name: ticket.receiverName || "",
+    payment_purpose: ticket.paymentPurpose || paymentPurpose(ticket),
+    manager_comment: ticket.managerComment || "",
+    stock_offer_confirmed: Boolean(ticket.stockOfferConfirmed),
+    main_crm_return_status: Boolean(ticket.mainCrmReturnStatus),
+    new_product: ticket.newProduct || "",
+    new_product_price: Number(ticket.newProductPrice || 0),
+    exchange_result: ticket.exchangeResult || "",
+    client_extra_payment: Number(ticket.clientExtraPayment || 0),
+    exchange_refund_amount: Number(ticket.exchangeRefundAmount || 0),
+    warehouse_user_id: ticket.warehouseUserId || null,
+    manager_user_id: ticket.managerUserId || null,
+    reviewer_user_id: ticket.reviewerUserId || null,
+    accountant_user_id: ticket.accountantUserId || null,
+    updated_by: ticket.updatedBy || null,
+    paid_at: ticket.paidAt || null,
+  };
+}
+
+function commentFromApi(comment) {
+  const author = state.users.find((user) => user.id === comment.author_user_id);
+  return {
+    id: comment.id,
+    type: comment.comment_type || "comment",
+    text: comment.body || "",
+    author: author?.name || "",
+    at: comment.created_at || nowIso(),
+  };
+}
+
+function logFromApi(log) {
+  const actor = state.users.find((user) => user.id === log.actor_user_id);
+  return {
+    id: log.id,
+    ticketId: log.ticket_id || "",
+    action: log.action || "",
+    previousValue: log.previous_value || "",
+    newValue: log.new_value || "",
+    at: log.created_at || nowIso(),
+    userName: actor?.name || "",
+    role: actor?.role ? ROLES[actor.role] : "",
+  };
+}
+
 function upsertSessionUser(profile) {
   const user = profileToUser(profile);
   const index = state.users.findIndex((item) => item.id === user.id || item.login === user.login);
@@ -149,16 +282,75 @@ async function loginWithSupabase(loginValue, passwordValue) {
   const email = `${loginValue}@${config.emailDomain}`;
   const { data, error } = await client.auth.signInWithPassword({ email, password: passwordValue });
   if (error || !data?.session?.access_token) throw new Error("Invalid remote credentials");
+  authToken = data.session.access_token;
+  localStorage.setItem(AUTH_TOKEN_KEY, authToken);
 
+  const payload = await loadRemoteData();
+  return upsertSessionUser(payload.currentUser);
+}
+
+async function loadRemoteData() {
+  if (!authToken) return null;
   const response = await fetch("/api/bootstrap", {
     headers: {
-      Authorization: `Bearer ${data.session.access_token}`,
+      Authorization: `Bearer ${authToken}`,
     },
   });
-  if (!response.ok) throw new Error("Failed to load user profile");
-
+  if (!response.ok) throw new Error("Failed to load remote data");
   const payload = await response.json();
-  return upsertSessionUser(payload.currentUser);
+  applyRemotePayload(payload);
+  return payload;
+}
+
+function applyRemotePayload(payload) {
+  state.users = (payload.users || []).map(userFromApi);
+  const commentGroups = {};
+  (payload.comments || []).forEach((comment) => {
+    const mapped = commentFromApi(comment);
+    commentGroups[comment.ticket_id] = commentGroups[comment.ticket_id] || [];
+    commentGroups[comment.ticket_id].push(mapped);
+  });
+  state.tickets = (payload.tickets || []).map((ticket) => ticketFromApi(ticket, commentGroups[ticket.id] || []));
+  state.logs = (payload.logs || []).map(logFromApi);
+  state.fops = (payload.fops || []).map((item) => item.name);
+  state.reasons = (payload.reasons || []).filter((item) => item.reason_type === "regular").map((item) => item.name);
+  state.preShipmentReasons = (payload.reasons || []).filter((item) => item.reason_type === "pre_shipment").map((item) => item.name);
+  saveState();
+}
+
+async function remoteTicketAction(action, ticket, extra = {}) {
+  if (!isRemoteSession()) return null;
+  const response = await fetch("/api/tickets", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${authToken}`,
+    },
+    body: JSON.stringify({
+      action,
+      ticket: ticketToApi(ticket),
+      ...extra,
+    }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.errors?.join(", ") || payload.error || "Помилка збереження");
+  return payload;
+}
+
+async function remoteUserRequest(method, body = {}) {
+  if (!isRemoteSession()) return null;
+  const response = await fetch("/api/users", {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${authToken}`,
+    },
+    body: JSON.stringify(body),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || "Помилка збереження користувача");
+  await loadRemoteData();
+  return payload;
 }
 
 function currentUser() {
@@ -745,15 +937,26 @@ function requiredLabel(key) {
   }[key] || key;
 }
 
-function saveNewTicket(event, draft = false) {
+async function saveNewTicket(event, draft = false) {
   event.preventDefault();
   const status = draft ? STATUSES.draft : STATUSES.new;
   const ticket = ticketFromCreateForm(status);
+  if (isRemoteSession()) ticket.crmId = "";
   const errors = validateWarehouse(ticket, draft);
   if (errors.length) {
     const target = byId("formErrors");
     target.textContent = `Заповніть або виправте: ${errors.join(", ")}`;
     target.scrollIntoView({ behavior: "smooth", block: "center" });
+    return;
+  }
+  if (isRemoteSession()) {
+    try {
+      const payload = await remoteTicketAction(draft ? "saveDraft" : "submitWarehouseDraft", ticket);
+      await loadRemoteData();
+      setPage("ticket", payload.ticket.id);
+    } catch (error) {
+      byId("formErrors").textContent = error.message;
+    }
     return;
   }
   state.tickets.unshift(ticket);
@@ -1096,19 +1299,39 @@ function readWarehouseDraftOverlay(ticket) {
   };
 }
 
-function saveWarehouseDraft(id) {
+async function saveWarehouseDraft(id) {
   const ticket = state.tickets.find((item) => item.id === id);
   Object.assign(ticket, readWarehouseDraftOverlay(ticket));
+  if (isRemoteSession()) {
+    try {
+      await remoteTicketAction("saveDraft", ticket);
+      await loadRemoteData();
+      render();
+    } catch (error) {
+      showActionErrors([error.message]);
+    }
+    return;
+  }
   logAction(ticket, "збережено чернетку", "", "оновлено поля складу");
   saveState();
   render();
 }
 
-function submitWarehouseDraft(id) {
+async function submitWarehouseDraft(id) {
   const ticket = state.tickets.find((item) => item.id === id);
   Object.assign(ticket, readWarehouseDraftOverlay(ticket));
   const errors = validateWarehouse(ticket, false);
   if (errors.length) return showActionErrors(errors);
+  if (isRemoteSession()) {
+    try {
+      await remoteTicketAction("submitWarehouseDraft", ticket);
+      await loadRemoteData();
+      render();
+    } catch (error) {
+      showActionErrors([error.message]);
+    }
+    return;
+  }
   const old = ticket.status;
   ticket.status = STATUSES.new;
   if (!ticket.crmId) ticket.crmId = nextCrmId(ticket.brand);
@@ -1118,10 +1341,20 @@ function submitWarehouseDraft(id) {
   render();
 }
 
-function deleteDraft(id) {
+async function deleteDraft(id) {
   const ticket = state.tickets.find((item) => item.id === id);
   if (!ticket || ticket.status !== STATUSES.draft) return;
   if (!confirm("Видалити чернетку?")) return;
+  if (isRemoteSession()) {
+    try {
+      await remoteTicketAction("deleteDraft", ticket);
+      await loadRemoteData();
+      setPage("tickets");
+    } catch (error) {
+      showActionErrors([error.message]);
+    }
+    return;
+  }
   state.tickets = state.tickets.filter((item) => item.id !== id);
   logAction(ticket, "видалено чернетку", ticket.status, "");
   saveState();
@@ -1147,20 +1380,31 @@ function updateDraftVisibility() {
   if (!showDelivery && byId("draftDeliveryDeduction")) byId("draftDeliveryDeduction").value = "";
 }
 
-function saveTicketEdits(id, silent = false) {
+async function saveTicketEdits(id, silent = false) {
   const ticket = state.tickets.find((item) => item.id === id);
   const updated = readFormOverlay(ticket);
   const changes = describeChanges(ticket, updated);
   Object.assign(ticket, updated, { updatedAt: nowIso(), updatedBy: currentUser().id });
   ticket.paymentPurpose = paymentPurpose(ticket);
   if (!ticket.managerUserId && currentUser().role === "manager") ticket.managerUserId = currentUser().id;
+  if (isRemoteSession()) {
+    try {
+      await remoteTicketAction("saveTicket", ticket);
+      await loadRemoteData();
+      if (!silent) showToast("Збережено");
+      if (!silent) render();
+    } catch (error) {
+      if (!silent) showActionErrors([error.message]);
+    }
+    return;
+  }
   logAction(ticket, "збережено зміни", changes.previous, changes.next);
   saveState();
   if (!silent) showToast("Збережено");
   if (!silent) render();
 }
 
-function switchManagerType(id, value) {
+async function switchManagerType(id, value) {
   const ticket = state.tickets.find((item) => item.id === id);
   if (!ticket || !value || ticket.type === value) return;
   const previous = ticket.type;
@@ -1180,6 +1424,16 @@ function switchManagerType(id, value) {
   }
   ticket.updatedAt = nowIso();
   ticket.updatedBy = currentUser().id;
+  if (isRemoteSession()) {
+    try {
+      await remoteTicketAction("saveTicket", ticket);
+      await loadRemoteData();
+      render();
+    } catch (error) {
+      showActionErrors([error.message]);
+    }
+    return;
+  }
   logAction(ticket, "змінено тип заявки", previous, value);
   saveState();
   render();
@@ -1264,8 +1518,8 @@ function validateManager(ticket) {
   return errors;
 }
 
-function managerSubmit(id) {
-  saveTicketEdits(id, true);
+async function managerSubmit(id) {
+  await saveTicketEdits(id, true);
   const ticket = state.tickets.find((item) => item.id === id);
   const errors = validateManager(ticket);
   if (errors.length) return showActionErrors(errors);
@@ -1273,10 +1527,20 @@ function managerSubmit(id) {
   if (ticket.type === "Відмова на пошті" || (ticket.type === "Обмін" && ["Доплата клієнта", "Без доплат"].includes(ticket.exchangeResult))) {
     ticket.status = STATUSES.doneNoRefund;
   } else {
-    ticket.status = STATUSES.review;
+  ticket.status = STATUSES.review;
   }
   ticket.managerUserId = currentUser().id;
   ticket.updatedAt = nowIso();
+  if (isRemoteSession()) {
+    try {
+      await remoteTicketAction("managerSubmit", ticket);
+      await loadRemoteData();
+      render();
+    } catch (error) {
+      showActionErrors([error.message]);
+    }
+    return;
+  }
   logAction(ticket, "змінено статус", old, ticket.status);
   saveState();
   render();
@@ -1290,7 +1554,7 @@ function showActionErrors(errors) {
   }
 }
 
-function headApprove(id) {
+async function headApprove(id) {
   const ticket = state.tickets.find((item) => item.id === id);
   const checks = Array.from({ length: headChecks(ticket).length }, (_, index) => byId(`check${index}`)?.checked);
   if (checks.some((item) => !item)) return showActionErrors(["усі пункти чек-листа"]);
@@ -1299,12 +1563,22 @@ function headApprove(id) {
   ticket.status = STATUSES.money;
   ticket.reviewerUserId = currentUser().id;
   ticket.updatedAt = nowIso();
+  if (isRemoteSession()) {
+    try {
+      await remoteTicketAction("headApprove", ticket);
+      await loadRemoteData();
+      render();
+    } catch (error) {
+      showActionErrors([error.message]);
+    }
+    return;
+  }
   logAction(ticket, "подано на повернення", old, ticket.status);
   saveState();
   render();
 }
 
-function headCompleteNoRefund(id) {
+async function headCompleteNoRefund(id) {
   const ticket = state.tickets.find((item) => item.id === id);
   const checks = Array.from({ length: headChecks(ticket).length }, (_, index) => byId(`check${index}`)?.checked);
   if (checks.some((item) => !item)) return showActionErrors(["усі пункти чек-листа"]);
@@ -1313,12 +1587,22 @@ function headCompleteNoRefund(id) {
   ticket.status = STATUSES.doneNoRefund;
   ticket.reviewerUserId = currentUser().id;
   ticket.updatedAt = nowIso();
+  if (isRemoteSession()) {
+    try {
+      await remoteTicketAction("saveTicket", ticket);
+      await loadRemoteData();
+      render();
+    } catch (error) {
+      showActionErrors([error.message]);
+    }
+    return;
+  }
   logAction(ticket, "завершено без повернення", old, ticket.status);
   saveState();
   render();
 }
 
-function headRework(id) {
+async function headRework(id) {
   const text = prompt("Коментар доопрацювання");
   if (!text) return;
   const ticket = state.tickets.find((item) => item.id === id);
@@ -1327,12 +1611,22 @@ function headRework(id) {
   ticket.reviewerUserId = currentUser().id;
   ticket.comments.unshift({ id: crypto.randomUUID(), type: "rework", text, author: currentUser().name, at: nowIso() });
   ticket.updatedAt = nowIso();
+  if (isRemoteSession()) {
+    try {
+      await remoteTicketAction("headRework", ticket, { comment: text });
+      await loadRemoteData();
+      render();
+    } catch (error) {
+      showActionErrors([error.message]);
+    }
+    return;
+  }
   logAction(ticket, "відправлено на доопрацювання", old, text);
   saveState();
   render();
 }
 
-function headReject(id) {
+async function headReject(id) {
   const text = prompt("Причина відхилення");
   if (!text) return;
   const ticket = state.tickets.find((item) => item.id === id);
@@ -1341,12 +1635,22 @@ function headReject(id) {
   ticket.reviewerUserId = currentUser().id;
   ticket.comments.unshift({ id: crypto.randomUUID(), type: "reject", text, author: currentUser().name, at: nowIso() });
   ticket.updatedAt = nowIso();
+  if (isRemoteSession()) {
+    try {
+      await remoteTicketAction("headReject", ticket, { comment: text });
+      await loadRemoteData();
+      render();
+    } catch (error) {
+      showActionErrors([error.message]);
+    }
+    return;
+  }
   logAction(ticket, "відхилено заявку", old, text);
   saveState();
   render();
 }
 
-function markPaid(id) {
+async function markPaid(id) {
   const ticket = state.tickets.find((item) => item.id === id);
   if (needsPaymentDetails(ticket)) {
     const missing = ["iban", "taxId", "receiverName"].filter((key) => !ticket[key]);
@@ -1357,6 +1661,16 @@ function markPaid(id) {
   ticket.accountantUserId = currentUser().id;
   ticket.paidAt = nowIso();
   ticket.updatedAt = nowIso();
+  if (isRemoteSession()) {
+    try {
+      await remoteTicketAction("markPaid", ticket);
+      await loadRemoteData();
+      render();
+    } catch (error) {
+      showActionErrors([error.message]);
+    }
+    return;
+  }
   logAction(ticket, "проведено повернення коштів", old, ticket.status);
   saveState();
   render();
@@ -1395,7 +1709,7 @@ function renderCommentItem(comment) {
   return `<div class="comment"><b>${title}</b><p>${escapeHtml(comment.text)}</p><div class="meta">${formatDateTime(comment.at)} · ${escapeHtml(comment.author)}</div></div>`;
 }
 
-function addTicketComment(id) {
+async function addTicketComment(id) {
   const ticket = state.tickets.find((item) => item.id === id);
   const input = byId("newCommentText");
   const error = byId("commentError");
@@ -1412,6 +1726,16 @@ function addTicketComment(id) {
     at: nowIso(),
   });
   ticket.updatedAt = nowIso();
+  if (isRemoteSession()) {
+    try {
+      await remoteTicketAction("addComment", ticket, { comment: text, commentType: "comment" });
+      await loadRemoteData();
+      render();
+    } catch (remoteError) {
+      if (error) error.textContent = remoteError.message;
+    }
+    return;
+  }
   logAction(ticket, "додано коментар", "", text);
   saveState();
   render();
@@ -1597,7 +1921,7 @@ function removeDirectoryItem(key, value) {
   render();
 }
 
-function addUser() {
+async function addUser() {
   const user = {
     id: crypto.randomUUID(),
     name: byId("newUserName").value.trim(),
@@ -1609,13 +1933,28 @@ function addUser() {
   };
   if (!user.name || !user.login || !user.role) return;
   if (state.users.some((item) => item.login === user.login)) return;
+  if (isRemoteSession()) {
+    try {
+      await remoteUserRequest("POST", {
+        login: user.login,
+        password: user.password,
+        name: user.name,
+        role: user.role,
+        brands: user.brands,
+      });
+      render();
+    } catch (error) {
+      alert(error.message);
+    }
+    return;
+  }
   state.users.push(user);
   logAction(null, "створено користувача", "", user.login);
   saveState();
   render();
 }
 
-function updateUser(id) {
+async function updateUser(id) {
   const user = state.users.find((item) => item.id === id);
   if (!user) return;
   const next = {
@@ -1625,8 +1964,21 @@ function updateUser(id) {
     role: byId(`userRole-${id}`)?.value || "",
     brands: BRANDS.filter((brand) => byId(`userBrand-${id}-${brand}`)?.checked),
   };
-  if (!next.name || !next.login || !next.password || !next.role || !next.brands.length) return;
+  if (!next.name || !next.login || (!isRemoteSession() && !next.password) || !next.role || !next.brands.length) return;
   if (state.users.some((item) => item.id !== id && item.login === next.login)) return;
+  if (isRemoteSession()) {
+    try {
+      await remoteUserRequest("PATCH", {
+        id,
+        ...next,
+        active: user.active,
+      });
+      render();
+    } catch (error) {
+      alert(error.message);
+    }
+    return;
+  }
   const previous = `${user.name} · ${user.login} · ${user.role} · ${user.brands.join(",")}`;
   Object.assign(user, next);
   if (sessionUserId === user.id && !user.active) user.active = true;
@@ -1636,19 +1988,45 @@ function updateUser(id) {
   render();
 }
 
-function toggleUser(id) {
+async function toggleUser(id) {
   const user = state.users.find((item) => item.id === id);
   if (!user || user.id === sessionUserId) return;
+  if (isRemoteSession()) {
+    try {
+      await remoteUserRequest("PATCH", {
+        id,
+        name: user.name,
+        login: user.login,
+        password: byId(`userPassword-${id}`)?.value.trim() || undefined,
+        role: user.role,
+        brands: user.brands,
+        active: !user.active,
+      });
+      render();
+    } catch (error) {
+      alert(error.message);
+    }
+    return;
+  }
   user.active = !user.active;
   logAction(null, user.active ? "активовано користувача" : "заблоковано користувача", user.login, String(user.active));
   saveState();
   render();
 }
 
-function deleteUser(id) {
+async function deleteUser(id) {
   const user = state.users.find((item) => item.id === id);
   if (!user || user.id === sessionUserId) return;
   if (!confirm(`Видалити користувача ${user.name}?`)) return;
+  if (isRemoteSession()) {
+    try {
+      await remoteUserRequest("DELETE", { id });
+      render();
+    } catch (error) {
+      alert(error.message);
+    }
+    return;
+  }
   state.users = state.users.filter((item) => item.id !== id);
   logAction(null, "видалено користувача", user.login, "");
   saveState();
@@ -1688,7 +2066,9 @@ async function login(event) {
 
 function logout() {
   sessionUserId = null;
+  authToken = "";
   localStorage.removeItem("moow_lexie_session");
+  localStorage.removeItem(AUTH_TOKEN_KEY);
   render();
 }
 
@@ -1735,6 +2115,7 @@ Object.assign(window, {
   deleteDraft,
   filterByStatus,
   headApprove,
+  headCompleteNoRefund,
   headReject,
   headRework,
   login,
@@ -1762,4 +2143,16 @@ Object.assign(window, {
   deleteUser,
 });
 
-render();
+async function boot() {
+  if (isRemoteSession()) {
+    try {
+      await loadRemoteData();
+    } catch (error) {
+      authToken = "";
+      localStorage.removeItem(AUTH_TOKEN_KEY);
+    }
+  }
+  render();
+}
+
+boot();

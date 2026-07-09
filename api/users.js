@@ -43,9 +43,9 @@ export default async function handler(req, res) {
 
       const authPayload = {
         email,
-        password: body.password,
         user_metadata: { login: body.login },
       };
+      if (body.password) authPayload.password = body.password;
       const { error: authError } = await supabase.auth.admin.updateUserById(body.id, authPayload);
       if (authError) return json(res, 400, { error: authError.message });
 

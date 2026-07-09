@@ -21,6 +21,12 @@ async function saveTicket(supabase, ticket) {
   delete payload.comments;
   delete payload.logs;
 
+  if (!payload.crm_id && payload.status && payload.status !== STATUSES.draft) {
+    const { data: crmId, error: crmError } = await supabase.rpc("next_crm_id", { target_brand: payload.brand });
+    if (crmError) throw crmError;
+    payload.crm_id = crmId;
+  }
+
   if (payload.id) {
     const { data, error } = await supabase.from("tickets").update(payload).eq("id", payload.id).select("*").single();
     if (error) throw error;
