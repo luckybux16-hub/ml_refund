@@ -624,18 +624,16 @@ function renderLogin() {
     <div class="login-wrap">
       <form class="login" onsubmit="login(event)">
         <h1>MOOW / LEXIE CRM</h1>
-        <p>Локальний тестовий прототип</p>
         <div class="field">
           <label>Логін</label>
-        <input id="loginInput" autocomplete="username" />
+          <input id="loginInput" autocomplete="username" />
         </div>
         <div class="field">
           <label>Пароль</label>
-        <input id="passwordInput" type="password" autocomplete="current-password" />
+          <input id="passwordInput" type="password" autocomplete="current-password" />
         </div>
         <div id="loginError" class="error"></div>
         <button style="width:100%; margin-top:12px">Увійти</button>
-        <p class="hint" style="margin-top:14px">Тест: admin, sklad, manager, head, accountant · пароль 123456</p>
       </form>
     </div>
   `;
