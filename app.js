@@ -66,6 +66,8 @@ let state = loadState();
 let sessionUserId = localStorage.getItem("moow_lexie_session");
 let view = { page: "dashboard", selectedId: null, filter: {}, mine: false, tab: "tickets" };
 let toastTimer = null;
+let remoteConfigPromise = null;
+let remoteClient = null;
 
 function loadState() {
   const raw = localStorage.getItem(STORAGE_KEY);
@@ -99,6 +101,64 @@ function normalizeState(saved) {
 
 function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+async function getRemoteConfig() {
+  if (!remoteConfigPromise) {
+    remoteConfigPromise = fetch("/api/config")
+      .then((response) => (response.ok ? response.json() : null))
+      .catch(() => null);
+  }
+  return remoteConfigPromise;
+}
+
+async function getRemoteClient() {
+  if (remoteClient) return remoteClient;
+  const config = await getRemoteConfig();
+  if (!config?.supabaseUrl || !config?.supabasePublishableKey || !window.supabase?.createClient) return null;
+  remoteClient = window.supabase.createClient(config.supabaseUrl, config.supabasePublishableKey);
+  return remoteClient;
+}
+
+function profileToUser(profile) {
+  return {
+    id: profile.id,
+    login: profile.login,
+    password: "",
+    name: profile.name,
+    role: profile.role,
+    brands: profile.brands || BRANDS,
+    active: profile.active !== false,
+  };
+}
+
+function upsertSessionUser(profile) {
+  const user = profileToUser(profile);
+  const index = state.users.findIndex((item) => item.id === user.id || item.login === user.login);
+  if (index >= 0) state.users[index] = { ...state.users[index], ...user };
+  else state.users.push(user);
+  saveState();
+  return user;
+}
+
+async function loginWithSupabase(loginValue, passwordValue) {
+  const config = await getRemoteConfig();
+  const client = await getRemoteClient();
+  if (!client || !config?.emailDomain) return null;
+
+  const email = `${loginValue}@${config.emailDomain}`;
+  const { data, error } = await client.auth.signInWithPassword({ email, password: passwordValue });
+  if (error || !data?.session?.access_token) throw new Error("Invalid remote credentials");
+
+  const response = await fetch("/api/bootstrap", {
+    headers: {
+      Authorization: `Bearer ${data.session.access_token}`,
+    },
+  });
+  if (!response.ok) throw new Error("Failed to load user profile");
+
+  const payload = await response.json();
+  return upsertSessionUser(payload.currentUser);
 }
 
 function currentUser() {
@@ -1604,11 +1664,18 @@ function resetDemo() {
   render();
 }
 
-function login(event) {
+async function login(event) {
   event.preventDefault();
   const loginValue = byId("loginInput").value.trim();
   const passwordValue = byId("passwordInput").value;
-  const user = state.users.find((item) => item.login === loginValue && item.password === passwordValue && item.active);
+  byId("loginError").textContent = "";
+  let user = null;
+  try {
+    user = await loginWithSupabase(loginValue, passwordValue);
+  } catch (error) {
+    user = null;
+  }
+  if (!user) user = state.users.find((item) => item.login === loginValue && item.password === passwordValue && item.active);
   if (!user) {
     byId("loginError").textContent = "Невірний логін або пароль.";
     return;
