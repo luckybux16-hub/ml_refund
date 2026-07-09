@@ -1899,10 +1899,39 @@ function renderSettings() {
   return `
     <section class="section panel">
       <h2>Налаштування</h2>
-      <p class="hint">Локальний прототип зберігає дані у браузері. Для нового тесту можна очистити локальні дані.</p>
-      <button class="danger" onclick="resetDemo()">Очистити тестові дані</button>
+      <p class="hint">${isRemoteSession() ? "Дані CRM зберігаються у Supabase. Резервну копію може завантажити тільки адміністратор." : "Локальний прототип зберігає дані у браузері. Для нового тесту можна очистити локальні дані."}</p>
+      <div class="actions">
+        ${isRemoteSession() ? `<button onclick="downloadBackup()">Скачати резервну копію</button>` : `<button class="danger" onclick="resetDemo()">Очистити тестові дані</button>`}
+      </div>
     </section>
   `;
+}
+
+async function downloadBackup() {
+  if (!authToken) {
+    alert("Потрібно увійти як адміністратор");
+    return;
+  }
+  try {
+    const response = await fetch("/api/backup", {
+      headers: {
+        Authorization: `Bearer ${authToken}`,
+      },
+    });
+    if (!response.ok) throw new Error("Не вдалося створити резервну копію");
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const date = new Date().toISOString().slice(0, 10);
+    link.href = url;
+    link.download = `crm-backup-${date}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    alert(error.message);
+  }
 }
 
 function addDirectoryItem(key, inputId) {
@@ -2113,6 +2142,7 @@ Object.assign(window, {
   autoTime,
   copyText,
   deleteDraft,
+  downloadBackup,
   filterByStatus,
   headApprove,
   headCompleteNoRefund,
