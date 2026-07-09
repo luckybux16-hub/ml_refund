@@ -11,8 +11,8 @@ async function insertLog(supabase, profile, ticket, action, previousValue = "", 
     order_number: ticket?.order_number || "",
     previous_value: previousValue,
     new_value: newValue,
-    device: req.headers["user-agent"] || "",
-    ip_address: String(req.headers["x-forwarded-for"] || "").split(",")[0] || "",
+    device: req?.headers?.["user-agent"] || "",
+    ip_address: String(req?.headers?.["x-forwarded-for"] || "").split(",")[0] || "",
   });
 }
 
