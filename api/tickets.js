@@ -28,7 +28,7 @@ async function saveTicket(supabase, ticket) {
   }
 
   if (payload.id) {
-    const { data, error } = await supabase.from("tickets").update(payload).eq("id", payload.id).select("*").single();
+    const { data, error } = await supabase.from("tickets").upsert(payload).select("*").single();
     if (error) throw error;
     return data;
   }
