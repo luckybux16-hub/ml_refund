@@ -371,6 +371,16 @@ textarea[readonly] {
   font-weight: 800;
 }
 
+.order-highlight {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #dff3ff;
+  color: #075985;
+  font-weight: 800;
+}
+
 .meta {
   color: var(--muted);
   font-size: 13px;
@@ -385,6 +395,11 @@ textarea[readonly] {
   font-size: 12px;
   font-weight: 800;
   white-space: nowrap;
+}
+
+.s-deleted {
+  background: #e5e7eb;
+  color: #374151;
 }
 
 .s-new { background: #e8f1ff; color: #0758b8; }

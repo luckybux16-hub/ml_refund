@@ -69,6 +69,7 @@ export default async function handler(req, res) {
       const saved = await saveTicket(supabase, {
         ...ticket,
         status: STATUSES.fresh,
+        rework_target: "",
         updated_by: profile.id,
         warehouse_user_id: ticket.warehouse_user_id || profile.id,
       });
@@ -92,6 +93,7 @@ export default async function handler(req, res) {
       const saved = await saveTicket(supabase, {
         ...ticket,
         status: nextStatus,
+        rework_target: "",
         manager_user_id: ticket.manager_user_id || profile.id,
         updated_by: profile.id,
       });
@@ -103,6 +105,7 @@ export default async function handler(req, res) {
       const saved = await saveTicket(supabase, {
         ...ticket,
         status: STATUSES.money,
+        rework_target: "",
         reviewer_user_id: profile.id,
         updated_by: profile.id,
       });
@@ -111,10 +114,13 @@ export default async function handler(req, res) {
     }
 
     if (action === "headRework") {
+      const reworkTarget = body.reworkTarget || ticket.rework_target || "office";
       const saved = await saveTicket(supabase, {
         ...ticket,
         status: STATUSES.rework,
-        reviewer_user_id: profile.id,
+        rework_target: reworkTarget,
+        reviewer_user_id: ["head", "admin", "accountant"].includes(profile.role) ? profile.id : ticket.reviewer_user_id,
+        manager_user_id: profile.role === "manager" ? profile.id : ticket.manager_user_id,
         updated_by: profile.id,
       });
       if (body.comment) {
@@ -129,10 +135,31 @@ export default async function handler(req, res) {
       return json(res, 200, { ticket: saved });
     }
 
+    if (action === "deleteTicket") {
+      if (profile.role !== "admin") return json(res, 403, { error: "Forbidden" });
+      const saved = await saveTicket(supabase, {
+        ...ticket,
+        status: STATUSES.deleted,
+        rework_target: "",
+        updated_by: profile.id,
+      });
+      if (body.comment) {
+        await supabase.from("ticket_comments").insert({
+          ticket_id: saved.id,
+          comment_type: "delete",
+          body: body.comment,
+          author_user_id: profile.id,
+        });
+      }
+      await insertLog(supabase, profile, saved, "видалено заявку", ticket.status, body.comment || "");
+      return json(res, 200, { ticket: saved });
+    }
+
     if (action === "headReject") {
       const saved = await saveTicket(supabase, {
         ...ticket,
         status: STATUSES.rejected,
+        rework_target: "",
         reviewer_user_id: profile.id,
         updated_by: profile.id,
       });
@@ -152,6 +179,7 @@ export default async function handler(req, res) {
       const saved = await saveTicket(supabase, {
         ...ticket,
         status: STATUSES.paid,
+        rework_target: "",
         accountant_user_id: profile.id,
         paid_at: new Date().toISOString(),
         updated_by: profile.id,

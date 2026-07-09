@@ -18,6 +18,7 @@ const STATUSES = {
   rework: "На доопрацювання",
   doneNoRefund: "Завершено без повернення",
   rejected: "Відхилено ❌",
+  deleted: "Видалено",
 };
 
 const STATUS_CLASS = {
@@ -29,6 +30,7 @@ const STATUS_CLASS = {
   [STATUSES.rework]: "s-rework",
   [STATUSES.rejected]: "s-rejected",
   [STATUSES.doneNoRefund]: "s-done",
+  [STATUSES.deleted]: "s-deleted",
 };
 
 const TYPES = ["Повернення", "Відмова на пошті", "Відмова до відправки", "Обмін"];
@@ -194,6 +196,7 @@ function ticketFromApi(ticket, comments = []) {
     accountantUserId: ticket.accountant_user_id || "",
     updatedBy: ticket.updated_by || "",
     paidAt: ticket.paid_at || "",
+    reworkTarget: ticket.rework_target || "",
   };
 }
 
@@ -237,6 +240,7 @@ function ticketToApi(ticket) {
     accountant_user_id: ticket.accountantUserId || null,
     updated_by: ticket.updatedBy || null,
     paid_at: ticket.paidAt || null,
+    rework_target: ticket.reworkTarget || "",
   };
 }
 
@@ -494,6 +498,7 @@ function headChecks(ticket) {
 
 function canSeeTicket(user, ticket) {
   if (!user) return false;
+  if (ticket.status === STATUSES.deleted) return user.role === "admin";
   if (ticket.status === STATUSES.draft) {
     if (user.role === "admin") return true;
     if (ticket.warehouseUserId === user.id || ticket.managerUserId === user.id) return true;
@@ -502,10 +507,10 @@ function canSeeTicket(user, ticket) {
   if (user.role === "admin") return true;
   if (user.role === "head") return true;
   if (user.role === "warehouse") {
-    return ticket.warehouseUserId === user.id || ticket.status === STATUSES.rework;
+    return ticket.warehouseUserId === user.id || (ticket.status === STATUSES.rework && ticket.reworkTarget === "warehouse");
   }
   if (user.role === "manager") {
-    return [STATUSES.new, STATUSES.rework].includes(ticket.status) || ticket.managerUserId === user.id;
+    return [STATUSES.new].includes(ticket.status) || (ticket.status === STATUSES.rework && ticket.reworkTarget !== "warehouse") || ticket.managerUserId === user.id;
   }
   if (user.role === "accountant") {
     return [STATUSES.money, STATUSES.paid].includes(ticket.status);
@@ -514,7 +519,7 @@ function canSeeTicket(user, ticket) {
 }
 
 function isFinalStatus(status) {
-  return [STATUSES.paid, STATUSES.doneNoRefund, STATUSES.rejected].includes(status);
+  return [STATUSES.paid, STATUSES.doneNoRefund, STATUSES.rejected, STATUSES.deleted].includes(status);
 }
 
 function visibleTickets() {
@@ -532,6 +537,7 @@ function applyFilters(ticket) {
   if (f.status && ticket.status !== f.status) return false;
   if (f.type && ticket.type !== f.type) return false;
   if (f.fop && ticket.managerFop !== f.fop && ticket.warehouseFop !== f.fop) return false;
+  if (f.paymentMethod && ticket.paymentMethod !== f.paymentMethod) return false;
   if (f.manager && ticket.managerUserId !== f.manager) return false;
   if (f.reason && ticket.reason !== f.reason) return false;
   if (view.mine && !isMine(ticket)) return false;
@@ -667,10 +673,10 @@ function renderPage(user) {
 function dashboardActionableTickets(user) {
   const visible = state.tickets.filter((ticket) => canSeeTicket(user, ticket));
   if (user.role === "warehouse") {
-    return visible.filter((ticket) => ticket.warehouseUserId === user.id && [STATUSES.draft, STATUSES.rework].includes(ticket.status));
+    return visible.filter((ticket) => ticket.warehouseUserId === user.id && ticket.status === STATUSES.draft || (ticket.status === STATUSES.rework && ticket.reworkTarget === "warehouse"));
   }
   if (user.role === "manager") {
-    return visible.filter((ticket) => [STATUSES.new, STATUSES.rework].includes(ticket.status));
+    return visible.filter((ticket) => ticket.status === STATUSES.new || (ticket.status === STATUSES.rework && ticket.reworkTarget !== "warehouse"));
   }
   if (user.role === "head") {
     return visible.filter((ticket) => [STATUSES.review, STATUSES.money].includes(ticket.status));
@@ -688,7 +694,7 @@ function dashboardCards(user) {
   if (user.role === "warehouse") {
     return [
       ["Чернетки", tickets.filter((t) => t.status === STATUSES.draft && t.warehouseUserId === user.id).length, STATUSES.draft],
-      ["На доопрацюванні", tickets.filter((t) => t.status === STATUSES.rework).length, STATUSES.rework],
+      ["На доопрацюванні", tickets.filter((t) => t.status === STATUSES.rework && t.reworkTarget === "warehouse").length, STATUSES.rework],
       ["Потрібно обробити", tickets.length, ""],
       ["Сьогодні", tickets.filter((t) => t.createdAt.slice(0, 10) === today).length, ""],
     ];
@@ -696,7 +702,7 @@ function dashboardCards(user) {
   if (user.role === "manager") {
     return [
       ["До перевірки потрібно оформити", tickets.filter((t) => t.status === STATUSES.new).length, STATUSES.new],
-      ["На доопрацюванні", tickets.filter((t) => t.status === STATUSES.rework).length, STATUSES.rework],
+      ["На доопрацюванні", tickets.filter((t) => t.status === STATUSES.rework && t.reworkTarget !== "warehouse").length, STATUSES.rework],
       ["Потрібно обробити", tickets.length, ""],
       ["Сьогодні", tickets.filter((t) => t.createdAt.slice(0, 10) === today).length, ""],
     ];
@@ -767,6 +773,7 @@ function renderTickets(user) {
         <select onchange="setFilter('type', this.value)">${option("", "Тип")}${TYPES.map((t) => option(t, t, view.filter.type)).join("")}</select>
         <button class="ghost" onclick="toggleMine()">${view.mine ? "Усі доступні" : "Мої заявки"}</button>
         <select onchange="setFilter('fop', this.value)">${option("", "ФОП")}${state.fops.map((fop) => option(fop, fop, view.filter.fop)).join("")}</select>
+        <select onchange="setFilter('paymentMethod', this.value)">${option("", "Спосіб оплати")}${PAYMENT_METHODS.map((method) => option(method, method, view.filter.paymentMethod)).join("")}</select>
         ${canCreateTicket(user) ? `<button onclick="setPage('create')">Створити повернення</button>` : ""}
       </div>
     </section>
@@ -795,7 +802,7 @@ function renderTicketCard(ticket) {
     <article class="ticket-card" onclick="setPage('ticket','${ticket.id}')">
       <div class="ticket-top">
         <div>
-          <div class="ticket-title">${ticket.crmId || "Чернетка"} · №${ticket.orderNumber || "—"}</div>
+          <div class="ticket-title">${ticket.crmId || "Чернетка"} · ${orderNumberLabel(ticket)}</div>
           <div class="meta">${ticket.brand} · ${ticket.type} · ${formatDateTime(ticket.createdAt)}</div>
         </div>
         ${badge(ticket.status)}
@@ -805,9 +812,23 @@ function renderTicketCard(ticket) {
         <div><span>Товар</span><b>${ticket.returnedProduct || "—"}</b></div>
         <div><span>Фінальна сума</span><b>${hasWarehouseMoney(ticket) || isPreShipmentRefusal(ticket) ? money(finalAmount(ticket)) : "—"}</b></div>
         <div><span>Відповідальний</span><b>${responsibleName(ticket)}</b></div>
+        <div><span>Очікується дія від</span><b>${expectedActionFrom(ticket) || "—"}</b></div>
       </div>
     </article>
   `;
+}
+
+function orderNumberLabel(ticket) {
+  return `<span class="order-highlight">№${escapeHtml(ticket.orderNumber || "—")}</span>`;
+}
+
+function expectedActionFrom(ticket) {
+  if (ticket.status === STATUSES.draft) return "складу";
+  if (ticket.status === STATUSES.new) return "офісу";
+  if (ticket.status === STATUSES.rework) return ticket.reworkTarget === "warehouse" ? "складу" : "офісу";
+  if (ticket.status === STATUSES.review) return "керівника";
+  if (ticket.status === STATUSES.money) return "бухгалтера";
+  return "";
 }
 
 function responsibleName(ticket) {
@@ -985,13 +1006,13 @@ function updateCreateVisibility() {
 function renderTicketDetails(user) {
   const ticket = state.tickets.find((item) => item.id === view.selectedId);
   if (!ticket || !canSeeTicket(user, ticket)) return `<div class="empty">Заявку не знайдено або немає доступу</div>`;
-  const readonly = isFinalStatus(ticket.status) && !["admin", "manager"].includes(user.role);
+  const readonly = isFinalStatus(ticket.status) && !["admin", "manager", "accountant"].includes(user.role);
   return `
     ${ticket.status === STATUSES.rework && ticket.comments.length ? renderReworkBanner(ticket) : ""}
     <section class="section">
       <div class="ticket-top">
         <div>
-          <h2>${ticket.crmId || "Чернетка"} · №${ticket.orderNumber || "—"}</h2>
+          <h2>${ticket.crmId || "Чернетка"} · ${orderNumberLabel(ticket)}</h2>
           <div class="meta">${ticket.brand} · ${ticket.type} · створено ${formatDateTime(ticket.createdAt)}</div>
         </div>
         ${badge(ticket.status)}
@@ -1015,7 +1036,9 @@ function renderCardBlocks(user, ticket, readonly) {
       <h3>Загальна інформація</h3>
       <div class="kv">
         <div><span>CRM ID</span><b>${ticket.crmId || "—"}</b></div>
+        <div><span>Номер замовлення</span><b>${orderNumberLabel(ticket)}</b></div>
         <div><span>Статус</span><b>${ticket.status}</b></div>
+        <div><span>Очікується дія від</span><b>${expectedActionFrom(ticket) || "—"}</b></div>
         <div><span>Відповідальний</span><b>${responsibleName(ticket)}</b></div>
       </div>
     </section>
@@ -1028,7 +1051,7 @@ function renderCardBlocks(user, ticket, readonly) {
 }
 
 function renderWarehouseBlock(user, ticket, readonly) {
-  if (ticket.status === STATUSES.draft && canEditWarehouseDraft(user, ticket)) return renderWarehouseDraftEditor(ticket);
+  if (canEditWarehouseDraft(user, ticket)) return renderWarehouseDraftEditor(ticket);
   const hideWarehouseFop = user.role === "manager" || user.role === "accountant";
   const showMoney = hasWarehouseMoney(ticket);
   const showDeliveryMoney = shouldShowDeliveryMoney(ticket);
@@ -1039,7 +1062,7 @@ function renderWarehouseBlock(user, ticket, readonly) {
       <div class="kv">
         <div><span>Бренд</span><b>${ticket.brand}</b></div>
         <div><span>Тип заявки</span><b>${ticket.type}</b></div>
-        <div><span>Номер замовлення</span><b>${ticket.orderNumber}</b></div>
+        <div><span>Номер замовлення</span><b>${orderNumberLabel(ticket)}</b></div>
         ${hideWarehouseFop ? "" : `<div><span>ФОП складу</span><b>${ticket.warehouseFop}</b></div>`}
         <div><span>Товар</span><b>${ticket.returnedProduct}</b></div>
         ${showMoney ? `<div><span>Початкова сума</span><b>${money(ticket.returnAmount)}</b></div>` : ""}
@@ -1054,7 +1077,8 @@ function renderWarehouseBlock(user, ticket, readonly) {
 }
 
 function canEditWarehouseDraft(user, ticket) {
-  return canCreateTicket(user) && ticket.status === STATUSES.draft && !isFinalStatus(ticket.status);
+  if (!canCreateTicket(user) || isFinalStatus(ticket.status)) return false;
+  return ticket.status === STATUSES.draft || (ticket.status === STATUSES.rework && ticket.reworkTarget === "warehouse");
 }
 
 function canDeleteDraft(user, ticket) {
@@ -1191,7 +1215,7 @@ function renderAccountingBlock(user, ticket, readonly) {
 function renderActions(user, ticket, readonly) {
   if (readonly) return "";
   const actions = [actionButton("", "setPage('tickets')", "ghost action-button", "back")];
-  if (ticket.status === STATUSES.draft && canEditWarehouseDraft(user, ticket)) {
+  if (canEditWarehouseDraft(user, ticket)) {
     actions.push(actionButton("", `saveWarehouseDraft('${ticket.id}')`, "ghost action-button", "save"));
     actions.push(actionButton("Передати", `submitWarehouseDraft('${ticket.id}')`, "action-button"));
   }
@@ -1204,6 +1228,9 @@ function renderActions(user, ticket, readonly) {
   if (canSubmitManagerStage(user, ticket, readonly)) {
     actions.push(actionButton(managerFinishLabel(ticket), `managerSubmit('${ticket.id}')`, "action-button"));
   }
+  if (user.role === "manager" && !isFinalStatus(ticket.status) && ticket.status !== STATUSES.draft) {
+    actions.push(actionButton("На склад", `managerReworkWarehouse('${ticket.id}')`, "ghost action-button"));
+  }
   if ((user.role === "head" || user.role === "admin") && ticket.status === STATUSES.review) {
     actions.push(actionButton("На повернення", `headApprove('${ticket.id}')`, "success action-button"));
     actions.push(actionButton("Доопрацювати", `headRework('${ticket.id}')`, "ghost action-button"));
@@ -1215,6 +1242,12 @@ function renderActions(user, ticket, readonly) {
   }
   if ((user.role === "accountant" || user.role === "admin") && ticket.status === STATUSES.money) {
     actions.push(actionButton("Повернення", `markPaid('${ticket.id}')`, "success action-button"));
+  }
+  if ((user.role === "accountant" || (user.role === "admin" && ![STATUSES.review, STATUSES.money].includes(ticket.status))) && ![STATUSES.deleted, STATUSES.rework].includes(ticket.status)) {
+    actions.push(actionButton("Доопрацювати", `headRework('${ticket.id}')`, "ghost action-button"));
+  }
+  if (user.role === "admin" && ticket.status !== STATUSES.deleted) {
+    actions.push(actionButton("Видалити", `deleteTicket('${ticket.id}')`, "danger action-button"));
   }
   return `<div id="actionErrors" class="error section"></div><div class="bottom-actions">${actions.join("")}</div>`;
 }
@@ -1332,6 +1365,7 @@ async function submitWarehouseDraft(id) {
   }
   const old = ticket.status;
   ticket.status = STATUSES.new;
+  ticket.reworkTarget = "";
   if (!ticket.crmId) ticket.crmId = nextCrmId(ticket.brand);
   ticket.updatedAt = nowIso();
   logAction(ticket, "передано менеджеру", old, ticket.status);
@@ -1528,6 +1562,7 @@ async function managerSubmit(id) {
   ticket.status = STATUSES.review;
   }
   ticket.managerUserId = currentUser().id;
+  ticket.reworkTarget = "";
   ticket.updatedAt = nowIso();
   if (isRemoteSession()) {
     try {
@@ -1559,6 +1594,7 @@ async function headApprove(id) {
   ticket.checklist = Object.fromEntries(checks.map((value, index) => [index, value]));
   const old = ticket.status;
   ticket.status = STATUSES.money;
+  ticket.reworkTarget = "";
   ticket.reviewerUserId = currentUser().id;
   ticket.updatedAt = nowIso();
   if (isRemoteSession()) {
@@ -1583,6 +1619,7 @@ async function headCompleteNoRefund(id) {
   ticket.checklist = Object.fromEntries(checks.map((value, index) => [index, value]));
   const old = ticket.status;
   ticket.status = STATUSES.doneNoRefund;
+  ticket.reworkTarget = "";
   ticket.reviewerUserId = currentUser().id;
   ticket.updatedAt = nowIso();
   if (isRemoteSession()) {
@@ -1606,12 +1643,13 @@ async function headRework(id) {
   const ticket = state.tickets.find((item) => item.id === id);
   const old = ticket.status;
   ticket.status = STATUSES.rework;
+  ticket.reworkTarget = "office";
   ticket.reviewerUserId = currentUser().id;
   ticket.comments.unshift({ id: crypto.randomUUID(), type: "rework", text, author: currentUser().name, at: nowIso() });
   ticket.updatedAt = nowIso();
   if (isRemoteSession()) {
     try {
-      await remoteTicketAction("headRework", ticket, { comment: text });
+      await remoteTicketAction("headRework", ticket, { comment: text, reworkTarget: "office" });
       await loadRemoteData();
       render();
     } catch (error) {
@@ -1624,12 +1662,63 @@ async function headRework(id) {
   render();
 }
 
+async function managerReworkWarehouse(id) {
+  const text = prompt("Коментар для складу");
+  if (!text) return;
+  const ticket = state.tickets.find((item) => item.id === id);
+  const old = ticket.status;
+  ticket.status = STATUSES.rework;
+  ticket.reworkTarget = "warehouse";
+  ticket.managerUserId = currentUser().id;
+  ticket.comments.unshift({ id: crypto.randomUUID(), type: "rework", text, author: currentUser().name, at: nowIso() });
+  ticket.updatedAt = nowIso();
+  if (isRemoteSession()) {
+    try {
+      await remoteTicketAction("headRework", ticket, { comment: text, reworkTarget: "warehouse" });
+      await loadRemoteData();
+      render();
+    } catch (error) {
+      showActionErrors([error.message]);
+    }
+    return;
+  }
+  logAction(ticket, "відправлено на доопрацювання складу", old, text);
+  saveState();
+  render();
+}
+
+async function deleteTicket(id) {
+  const ticket = state.tickets.find((item) => item.id === id);
+  if (!ticket || currentUser().role !== "admin") return;
+  const reason = prompt("Причина видалення заявки");
+  if (!reason) return;
+  const old = ticket.status;
+  ticket.status = STATUSES.deleted;
+  ticket.reworkTarget = "";
+  ticket.updatedAt = nowIso();
+  ticket.updatedBy = currentUser().id;
+  if (isRemoteSession()) {
+    try {
+      await remoteTicketAction("deleteTicket", ticket, { comment: reason });
+      await loadRemoteData();
+      setPage("tickets");
+    } catch (error) {
+      showActionErrors([error.message]);
+    }
+    return;
+  }
+  logAction(ticket, "видалено заявку", old, reason);
+  saveState();
+  setPage("tickets");
+}
+
 async function headReject(id) {
   const text = prompt("Причина відхилення");
   if (!text) return;
   const ticket = state.tickets.find((item) => item.id === id);
   const old = ticket.status;
   ticket.status = STATUSES.rejected;
+  ticket.reworkTarget = "";
   ticket.reviewerUserId = currentUser().id;
   ticket.comments.unshift({ id: crypto.randomUUID(), type: "reject", text, author: currentUser().name, at: nowIso() });
   ticket.updatedAt = nowIso();
@@ -1656,6 +1745,7 @@ async function markPaid(id) {
   }
   const old = ticket.status;
   ticket.status = STATUSES.paid;
+  ticket.reworkTarget = "";
   ticket.accountantUserId = currentUser().id;
   ticket.paidAt = nowIso();
   ticket.updatedAt = nowIso();
@@ -1703,6 +1793,8 @@ function renderCommentItem(comment) {
       ? "Доопрацювання"
       : comment.type === "reject"
         ? "Відхилення"
+        : comment.type === "delete"
+          ? "Видалення"
         : "Коментар";
   return `<div class="comment"><b>${title}</b><p>${escapeHtml(comment.text)}</p><div class="meta">${formatDateTime(comment.at)} · ${escapeHtml(comment.author)}</div></div>`;
 }
@@ -1759,7 +1851,7 @@ function updateBrandSelectTheme() {
 }
 
 function renderStats(user) {
-  const tickets = filterStatsTickets(state.tickets.filter((ticket) => canSeeTicket(user, ticket)));
+  const tickets = filterStatsTickets(state.tickets.filter((ticket) => canSeeTicket(user, ticket) && ticket.status !== STATUSES.deleted));
   const totalAmount = tickets.filter((t) => [STATUSES.money, STATUSES.paid].includes(t.status)).reduce((sum, t) => sum + finalAmount(t), 0);
   const allReasons = [...state.reasons, ...(state.preShipmentReasons || PRE_SHIPMENT_REASONS)];
   const reasons = allReasons.map((reason) => [reason, tickets.filter((ticket) => ticket.reason === reason).length]).filter(([, count]) => count > 0);
@@ -1788,7 +1880,7 @@ function renderStats(user) {
     </section>
     <section class="section panel">
       <h3>Статуси</h3>
-      ${Object.values(STATUSES).map((s) => `<div class="copy-row"><b>${s}</b><span>${tickets.filter((t) => t.status === s).length}</span></div>`).join("")}
+      ${Object.values(STATUSES).filter((s) => s !== STATUSES.deleted).map((s) => `<div class="copy-row"><b>${s}</b><span>${tickets.filter((t) => t.status === s).length}</span></div>`).join("")}
     </section>
     <section class="section panel">
       <h3>Причини повернення</h3>
@@ -2139,6 +2231,7 @@ Object.assign(window, {
   autoDate,
   autoTime,
   copyText,
+  deleteTicket,
   deleteDraft,
   downloadBackup,
   filterByStatus,
@@ -2149,6 +2242,7 @@ Object.assign(window, {
   login,
   logout,
   managerSubmit,
+  managerReworkWarehouse,
   markPaid,
   removeDirectoryItem,
   render,

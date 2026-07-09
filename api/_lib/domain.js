@@ -7,10 +7,11 @@ export const STATUSES = {
   rework: "На доопрацювання",
   doneNoRefund: "Завершено без повернення",
   rejected: "Відхилено ❌",
+  deleted: "Видалено",
 };
 
 export function isFinalStatus(status) {
-  return [STATUSES.paid, STATUSES.doneNoRefund, STATUSES.rejected].includes(status);
+  return [STATUSES.paid, STATUSES.doneNoRefund, STATUSES.rejected, STATUSES.deleted].includes(status);
 }
 
 export function isPreShipmentRefusal(ticket) {
@@ -31,11 +32,12 @@ export function needsMainCrmReturnStatus(ticket) {
 }
 
 export function canSeeTicket(profile, ticket) {
+  if (ticket.status === STATUSES.deleted) return profile.role === "admin";
   if (profile.role === "admin") return true;
   if (!profile.brands.includes(ticket.brand)) return false;
   if (profile.role === "head") return true;
-  if (profile.role === "warehouse") return ticket.warehouse_user_id === profile.id || ticket.status === STATUSES.rework;
-  if (profile.role === "manager") return [STATUSES.fresh, STATUSES.rework].includes(ticket.status) || ticket.manager_user_id === profile.id;
+  if (profile.role === "warehouse") return ticket.warehouse_user_id === profile.id || (ticket.status === STATUSES.rework && ticket.rework_target === "warehouse");
+  if (profile.role === "manager") return [STATUSES.fresh].includes(ticket.status) || (ticket.status === STATUSES.rework && ticket.rework_target !== "warehouse") || ticket.manager_user_id === profile.id;
   if (profile.role === "accountant") return [STATUSES.money, STATUSES.paid].includes(ticket.status);
   return false;
 }
