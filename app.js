@@ -2437,6 +2437,7 @@ async function login(event) {
     return;
   }
   await logLoginAttempt(loginValue, true);
+  if (user.role === "admin" && isRemoteSession()) await loadRemoteData().catch(() => null);
   sessionUserId = user.id;
   localStorage.setItem("moow_lexie_session", user.id);
   view = { page: "dashboard", selectedId: null, filter: {}, mine: false, tab: "Картка" };

@@ -15,12 +15,13 @@ export default async function handler(req, res) {
       .eq("login", login)
       .maybeSingle();
 
+    const headers = req.headers || {};
     const { error } = await supabase.from("login_events").insert({
       login,
       success: Boolean(body.success),
       user_id: profile?.id || null,
-      device: req.headers["user-agent"] || "",
-      ip_address: String(req.headers["x-forwarded-for"] || "").split(",")[0] || "",
+      device: headers["user-agent"] || "",
+      ip_address: String(headers["x-forwarded-for"] || "").split(",")[0] || "",
     });
     if (error) throw error;
 
