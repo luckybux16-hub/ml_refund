@@ -1331,19 +1331,14 @@ function renderAccountingBlock(user, ticket, readonly) {
     ["Початкова сума", money(ticket.returnAmount), false],
     ...(isPreShipmentRefusal(ticket) ? [] : [["Доставка оплачена", ticket.deliveryPaid, false]]),
     ...(shouldShowDeliveryMoney(ticket) ? [["Сума утримання", money(ticket.deliveryDeduction), false]] : []),
-    ["Фінальна сума", money(finalAmount(ticket)), true],
     ...(showRequisites ? [["IBAN", ticket.iban, true], ["ІПН", ticket.taxId, true], ["ПІБ отримувача", ticket.receiverName, true]] : []),
     ["Призначення платежу", ticket.paymentPurpose || paymentPurpose(ticket), true],
+    ["До виплати", money(finalAmount(ticket)), true],
   ];
   return `
     <section class="panel section">
       <h3>Повернення коштів</h3>
-      <div class="accounting-total">
-        <span>До виплати</span>
-        <strong>${money(finalAmount(ticket))}</strong>
-        ${copyButton(money(finalAmount(ticket)))}
-      </div>
-      ${rows.map(([label, value, copy]) => `<div class="copy-row accounting-row"><div><span class="meta">${label}</span><br><b>${escapeHtml(value || "—")}</b></div>${copy ? copyButton(value || "") : ""}</div>`).join("")}
+      ${rows.map(([label, value, copy]) => `<div class="copy-row accounting-row ${label === "До виплати" ? "accounting-total" : ""}"><div><span class="meta">${label}</span><br><b>${escapeHtml(value || "—")}</b></div>${copy ? copyButton(value || "") : ""}</div>`).join("")}
     </section>
   `;
 }
