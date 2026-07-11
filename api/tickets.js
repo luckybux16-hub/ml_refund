@@ -59,7 +59,7 @@ export default async function handler(req, res) {
         updated_by: profile.id,
         warehouse_user_id: ticket.warehouse_user_id || profile.id,
       });
-      await insertLog(supabase, profile, saved, "збережено чернетку");
+      await insertLog(supabase, profile, saved, "збережено чернетку", body.previousValue || "", body.newValue || "");
       return json(res, 200, { ticket: saved });
     }
 
@@ -82,7 +82,7 @@ export default async function handler(req, res) {
         ...ticket,
         updated_by: profile.id,
       });
-      await insertLog(supabase, profile, saved, "збережено зміни");
+      await insertLog(supabase, profile, saved, "збережено зміни", body.previousValue || "", body.newValue || "");
       return json(res, 200, { ticket: saved });
     }
 

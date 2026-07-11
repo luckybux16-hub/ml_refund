@@ -767,7 +767,7 @@ function renderTickets(user) {
   return `
     <section class="section">
       <div class="toolbar">
-        <input placeholder="Пошук" value="${view.filter.search || ""}" oninput="setFilter('search', this.value)" />
+        <input id="ticketSearch" placeholder="Пошук" value="${view.filter.search || ""}" oninput="setFilter('search', this.value)" />
         ${brandSelectControl("ticketFilterBrand", "Бренд", view.filter.brand, `onchange="setFilter('brand', this.value); updateBrandSelectTheme()"`, true)}
         <select onchange="setFilter('status', this.value)">${option("", "Статус")}${Object.values(STATUSES).map((s) => option(s, s, view.filter.status)).join("")}</select>
         <select onchange="setFilter('type', this.value)">${option("", "Тип")}${TYPES.map((t) => option(t, t, view.filter.type)).join("")}</select>
@@ -784,8 +784,18 @@ function renderTickets(user) {
 }
 
 function setFilter(key, value) {
+  const activeId = document.activeElement?.id || "";
+  const cursor = document.activeElement && "selectionStart" in document.activeElement ? document.activeElement.selectionStart : null;
   view.filter[key] = value;
   render();
+  if (activeId) {
+    setTimeout(() => {
+      const input = byId(activeId);
+      if (!input) return;
+      input.focus();
+      if (cursor != null && "setSelectionRange" in input) input.setSelectionRange(cursor, cursor);
+    }, 0);
+  }
 }
 
 function toggleMine() {
@@ -1332,10 +1342,12 @@ function readWarehouseDraftOverlay(ticket) {
 
 async function saveWarehouseDraft(id) {
   const ticket = state.tickets.find((item) => item.id === id);
-  Object.assign(ticket, readWarehouseDraftOverlay(ticket));
+  const updated = readWarehouseDraftOverlay(ticket);
+  const changes = describeChanges(ticket, updated);
+  Object.assign(ticket, updated);
   if (isRemoteSession()) {
     try {
-      await remoteTicketAction("saveDraft", ticket);
+      await remoteTicketAction("saveDraft", ticket, { previousValue: changes.previous, newValue: changes.next });
       await loadRemoteData();
       render();
     } catch (error) {
@@ -1343,7 +1355,7 @@ async function saveWarehouseDraft(id) {
     }
     return;
   }
-  logAction(ticket, "збережено чернетку", "", "оновлено поля складу");
+  logAction(ticket, "збережено чернетку", changes.previous, changes.next);
   saveState();
   render();
 }
@@ -1421,7 +1433,7 @@ async function saveTicketEdits(id, silent = false) {
   if (!ticket.managerUserId && currentUser().role === "manager") ticket.managerUserId = currentUser().id;
   if (isRemoteSession()) {
     try {
-      await remoteTicketAction("saveTicket", ticket);
+      await remoteTicketAction("saveTicket", ticket, { previousValue: changes.previous, newValue: changes.next });
       await loadRemoteData();
       if (!silent) showToast("Збережено");
       if (!silent) render();
@@ -1474,6 +1486,13 @@ async function switchManagerType(id, value) {
 function describeChanges(before, after) {
   const labels = {
     status: "Статус",
+    brand: "Бренд",
+    type: "Тип заявки",
+    orderNumber: "Номер замовлення",
+    warehouseFop: "ФОП складу",
+    returnedProduct: "Товар",
+    photoSent: "Фото відправлено",
+    warehouseComment: "Коментар складу",
     managerFop: "ФОП",
     orderDate: "Дата",
     orderTime: "Час",
@@ -1766,7 +1785,19 @@ async function markPaid(id) {
 
 function renderHistory(ticket) {
   const rows = state.logs.filter((log) => log.ticketId === ticket.id);
-  return `<section class="section grid">${rows.length ? rows.map((log) => `<div class="log-row"><b>${escapeHtml(log.action)}</b><div>${escapeHtml(log.previousValue || "—")} → ${escapeHtml(log.newValue || "—")}</div><div class="meta">${formatDateTime(log.at)} · ${escapeHtml(log.userName)} · ${escapeHtml(log.role)}</div></div>`).join("") : `<div class="empty">Історія порожня</div>`}</section>`;
+  return `<section class="section grid">${rows.length ? rows.map(renderHistoryItem).join("") : `<div class="empty">Історія порожня</div>`}</section>`;
+}
+
+function renderHistoryItem(log) {
+  return `
+    <div class="log-row">
+      <b>${escapeHtml(log.action)}</b>
+      <div class="history-line"><span>Хто</span><strong>${escapeHtml(log.userName || "—")} · ${escapeHtml(log.role || "—")}</strong></div>
+      <div class="history-line"><span>Було</span><strong>${escapeHtml(log.previousValue || "—")}</strong></div>
+      <div class="history-line"><span>Стало</span><strong>${escapeHtml(log.newValue || "—")}</strong></div>
+      <div class="meta">${formatDateTime(log.at)}</div>
+    </div>
+  `;
 }
 
 function renderComments(ticket) {
