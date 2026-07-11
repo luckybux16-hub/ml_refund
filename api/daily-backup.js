@@ -7,6 +7,7 @@ const TABLES = [
   "tickets",
   "ticket_comments",
   "audit_logs",
+  "login_events",
   "crm_counters",
 ];
 

@@ -55,6 +55,14 @@ const PRE_SHIPMENT_REASONS = [
   "Товара немає в наявності (і не хоче чекати)",
 ];
 
+const ROLE_ACCENTS = {
+  warehouse: "role-warehouse",
+  manager: "role-manager",
+  head: "role-head",
+  accountant: "role-accountant",
+  admin: "role-admin",
+};
+
 const DEFAULT_USERS = [
   { id: "u-admin", login: "admin", password: "123456", name: "Адміністратор", role: "admin", brands: BRANDS, active: true },
   { id: "u-sklad", login: "sklad", password: "123456", name: "Склад", role: "warehouse", brands: BRANDS, active: true },
@@ -83,6 +91,7 @@ function loadState() {
     preShipmentReasons: PRE_SHIPMENT_REASONS,
     tickets: [],
     logs: [],
+    loginEvents: [],
     counters: { MOOW: 0, LEXIE: 0 },
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(initial));
@@ -96,6 +105,7 @@ function normalizeState(saved) {
   saved.users = saved.users || DEFAULT_USERS;
   saved.tickets = saved.tickets || [];
   saved.logs = saved.logs || [];
+  saved.loginEvents = saved.loginEvents || [];
   saved.counters = saved.counters || { MOOW: 0, LEXIE: 0 };
   saved.tickets.forEach((ticket) => {
     if (ticket.stockOfferConfirmed == null) ticket.stockOfferConfirmed = false;
@@ -269,6 +279,20 @@ function logFromApi(log) {
   };
 }
 
+function loginEventFromApi(event) {
+  const user = state.users.find((item) => item.id === event.user_id || item.login === event.login);
+  return {
+    id: event.id,
+    login: event.login || "",
+    success: Boolean(event.success),
+    userName: user?.name || "",
+    role: user?.role ? ROLES[user.role] : "",
+    device: event.device || "",
+    ipAddress: event.ip_address || "",
+    at: event.created_at || nowIso(),
+  };
+}
+
 function upsertSessionUser(profile) {
   const user = profileToUser(profile);
   const index = state.users.findIndex((item) => item.id === user.id || item.login === user.login);
@@ -316,6 +340,7 @@ function applyRemotePayload(payload) {
   });
   state.tickets = (payload.tickets || []).map((ticket) => ticketFromApi(ticket, commentGroups[ticket.id] || []));
   state.logs = (payload.logs || []).map(logFromApi);
+  state.loginEvents = (payload.loginEvents || []).map(loginEventFromApi);
   state.fops = (payload.fops || []).map((item) => item.name);
   state.reasons = (payload.reasons || []).filter((item) => item.reason_type === "regular").map((item) => item.name);
   state.preShipmentReasons = (payload.reasons || []).filter((item) => item.reason_type === "pre_shipment").map((item) => item.name);
@@ -355,6 +380,19 @@ async function remoteUserRequest(method, body = {}) {
   if (!response.ok) throw new Error(payload.error || "Помилка збереження користувача");
   await loadRemoteData();
   return payload;
+}
+
+async function logLoginAttempt(loginValue, success) {
+  if (!isRemoteSession() && !remoteConfigPromise) return;
+  try {
+    await fetch("/api/login-events", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ login: loginValue, success }),
+    });
+  } catch (error) {
+    // Login must never fail because analytics logging failed.
+  }
 }
 
 function currentUser() {
@@ -630,7 +668,12 @@ function renderLogin() {
   app.innerHTML = `
     <div class="login-wrap">
       <form class="login" onsubmit="login(event)">
-        <h1>MOOW / LEXIE CRM</h1>
+        <div class="brand-lockup">
+          <span class="brand-chip moow-chip">MOOW</span>
+          <span class="brand-chip lexie-chip">LEXIE</span>
+        </div>
+        <h1>CRM повернень та обмінів</h1>
+        <p>Вхід для команди складу, офісу, керівника та бухгалтерії</p>
         <div class="field">
           <label>Логін</label>
           <input id="loginInput" autocomplete="username" />
@@ -654,7 +697,7 @@ function renderNav(user) {
   ];
   if (user.role !== "manager" && user.role !== "warehouse") items.push(["stats", "Статистика"]);
   if (user.role === "admin") {
-    items.push(["audit", "Журнал"], ["directories", "Довідники"], ["users", "Користувачі"], ["settings", "Налаштування"]);
+    items.push(["logins", "Входи"], ["directories", "Довідники"], ["users", "Користувачі"], ["settings", "Налаштування"]);
   }
   return `<nav class="nav">${items.map(([page, label]) => `<button class="${view.page === page ? "active" : ""}" onclick="setPage('${page}')">${label}</button>`).join("")}</nav>`;
 }
@@ -665,7 +708,7 @@ function renderPage(user) {
   if (view.page === "create") return renderTicketForm(user);
   if (view.page === "ticket") return renderTicketDetails(user);
   if (view.page === "stats") return renderStats(user);
-  if (view.page === "audit") return renderAuditLog();
+  if (view.page === "logins") return renderLoginEvents();
   if (view.page === "directories") return renderDirectories();
   if (view.page === "users") return renderUsers();
   if (view.page === "settings") return renderSettings();
@@ -739,8 +782,8 @@ function renderDashboard(user) {
   const cards = dashboardCards(user);
   const recent = dashboardActionableTickets(user).slice(0, 6);
   return `
+    ${renderRoleHero(user)}
     <section class="section">
-      <h2>Головна</h2>
       <div class="stats-grid">
         ${cards.map(([label, value, status]) => `<button class="stat-card" onclick="filterByStatus('${status}')"><span>${label}</span><strong>${value}</strong></button>`).join("")}
       </div>
@@ -754,6 +797,33 @@ function renderDashboard(user) {
     <section class="section">
       <h3>Потрібно обробити</h3>
       <div class="grid">${recent.length ? recent.map(renderTicketCard).join("") : `<div class="empty">Поки заявок немає</div>`}</div>
+    </section>
+  `;
+}
+
+function renderRoleHero(user) {
+  const tickets = dashboardActionableTickets(user);
+  const overdue = tickets.filter(isOverdueTicket).length;
+  const rework = tickets.filter((ticket) => ticket.status === STATUSES.rework).length;
+  const text = {
+    warehouse: "Сьогодні головне - швидко прийняти повернення і передати офісу.",
+    manager: "Фокус дня - оформити звернення без помилок і передати на перевірку.",
+    head: "Ваш екран контролю: перевірка, доопрацювання і фінальна якість процесу.",
+    accountant: "Тут зібрані заявки, де вже можна проводити виплату.",
+    admin: "Повний огляд системи, користувачів і операцій.",
+  }[user.role] || "Ваші актуальні задачі";
+  return `
+    <section class="role-hero ${ROLE_ACCENTS[user.role] || ""}">
+      <div>
+        <div class="role-pill">${ROLES[user.role]}</div>
+        <h2>Вітаю, ${escapeHtml(user.name)}</h2>
+        <p>${text}</p>
+      </div>
+      <div class="role-hero-metrics">
+        <div><span>Потрібно</span><b>${tickets.length}</b></div>
+        <div><span>Прострочено</span><b>${overdue}</b></div>
+        <div><span>Доопрацювання</span><b>${rework}</b></div>
+      </div>
     </section>
   `;
 }
@@ -1057,11 +1127,33 @@ function renderTicketDetails(user) {
         ${badge(ticket.status)}
       </div>
     </section>
+    ${renderWorkflowSteps(ticket)}
     <div class="tabs">
       ${["Картка", "Історія", "Коментарі"].map((tab) => `<button class="${view.tab === tab ? "active" : ""}" onclick="view.tab='${tab}'; render()">${tab}</button>`).join("")}
     </div>
     ${view.tab === "Історія" ? renderHistory(ticket) : view.tab === "Коментарі" ? renderComments(ticket) : renderCardBlocks(user, ticket, readonly)}
   `;
+}
+
+function renderWorkflowSteps(ticket) {
+  const steps = ["Склад", "Офіс", "Керівник", "Бухгалтер", "Готово"];
+  const current = workflowStep(ticket);
+  return `
+    <section class="workflow section">
+      ${steps.map((step, index) => {
+        const stateClass = index < current ? "done" : index === current ? "active" : "";
+        return `<div class="workflow-step ${stateClass}"><span>${index + 1}</span><b>${step}</b></div>`;
+      }).join("")}
+    </section>
+  `;
+}
+
+function workflowStep(ticket) {
+  if ([STATUSES.paid, STATUSES.doneNoRefund, STATUSES.rejected].includes(ticket.status)) return 4;
+  if (ticket.status === STATUSES.money) return 3;
+  if (ticket.status === STATUSES.review) return 2;
+  if (ticket.status === STATUSES.new || (ticket.status === STATUSES.rework && ticket.reworkTarget !== "warehouse")) return 1;
+  return 0;
 }
 
 function renderReworkBanner(ticket) {
@@ -1246,9 +1338,18 @@ function renderAccountingBlock(user, ticket, readonly) {
   return `
     <section class="panel section">
       <h3>Повернення коштів</h3>
-      ${rows.map(([label, value, copy]) => `<div class="copy-row"><div><span class="meta">${label}</span><br><b>${escapeHtml(value || "—")}</b></div>${copy ? `<button class="ghost" onclick="copyText('${escapeAttr(value || "")}')">Копіювати</button>` : ""}</div>`).join("")}
+      <div class="accounting-total">
+        <span>До виплати</span>
+        <strong>${money(finalAmount(ticket))}</strong>
+        ${copyButton(money(finalAmount(ticket)))}
+      </div>
+      ${rows.map(([label, value, copy]) => `<div class="copy-row accounting-row"><div><span class="meta">${label}</span><br><b>${escapeHtml(value || "—")}</b></div>${copy ? copyButton(value || "") : ""}</div>`).join("")}
     </section>
   `;
+}
+
+function copyButton(value) {
+  return `<button class="ghost copy-button" onclick="copyText('${escapeAttr(value || "")}')"><span class="action-icon">${actionIcon("copy")}</span><span class="action-label">Копіювати</span></button>`;
 }
 
 function renderActions(user, ticket, readonly) {
@@ -1303,6 +1404,9 @@ function actionIcon(name) {
   }
   if (name === "save") {
     return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h11l3 3v13H5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M8 4v6h8V4" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M9 18h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
+  }
+  if (name === "copy") {
+    return `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="10" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5 15V7a2 2 0 0 1 2-2h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
   }
   return "";
 }
@@ -1950,53 +2054,55 @@ function renderStats(user) {
   `;
 }
 
-function renderAuditLog() {
-  const rows = filterAuditLogs(state.logs);
+function renderLoginEvents() {
+  const rows = filterLoginEvents(state.loginEvents || []);
   return `
     <section class="section">
-      <h2>Журнал дій</h2>
+      <h2>Журнал входів</h2>
       <div class="toolbar">
-        <input id="auditSearch" placeholder="Пошук у журналі" value="${view.auditSearch || ""}" oninput="setAuditFilter('auditSearch', this.value)" />
-        <input type="date" value="${view.auditFrom || ""}" onchange="setAuditFilter('auditFrom', this.value)" />
-        <input type="date" value="${view.auditTo || ""}" onchange="setAuditFilter('auditTo', this.value)" />
+        <input id="loginEventSearch" placeholder="Пошук за логіном або пристроєм" value="${view.loginEventSearch || ""}" oninput="setLoginEventFilter('loginEventSearch', this.value)" />
+        <input type="date" value="${view.loginEventFrom || ""}" onchange="setLoginEventFilter('loginEventFrom', this.value)" />
+        <input type="date" value="${view.loginEventTo || ""}" onchange="setLoginEventFilter('loginEventTo', this.value)" />
       </div>
     </section>
     <section class="section grid">
-      ${rows.length ? rows.map(renderAuditItem).join("") : `<div class="empty">Журнал порожній</div>`}
+      ${rows.length ? rows.map(renderLoginEventItem).join("") : `<div class="empty">Журнал входів порожній</div>`}
     </section>
   `;
 }
 
-function filterAuditLogs(logs) {
-  const search = (view.auditSearch || "").toLowerCase();
-  const from = view.auditFrom ? new Date(`${view.auditFrom}T00:00:00`) : null;
-  const to = view.auditTo ? new Date(`${view.auditTo}T23:59:59`) : null;
-  return logs.filter((log) => {
-    const at = new Date(log.at);
+function filterLoginEvents(events) {
+  const search = (view.loginEventSearch || "").toLowerCase();
+  const from = view.loginEventFrom ? new Date(`${view.loginEventFrom}T00:00:00`) : null;
+  const to = view.loginEventTo ? new Date(`${view.loginEventTo}T23:59:59`) : null;
+  return events.filter((event) => {
+    const at = new Date(event.at);
     if (from && at < from) return false;
     if (to && at > to) return false;
     if (search) {
-      const haystack = [log.userName, log.role, log.action, log.previousValue, log.newValue, log.crmId, log.orderNumber].join(" ").toLowerCase();
+      const haystack = [event.login, event.userName, event.role, event.device, event.ipAddress].join(" ").toLowerCase();
       if (!haystack.includes(search)) return false;
     }
     return true;
   });
 }
 
-function renderAuditItem(log) {
-  const ticket = state.tickets.find((item) => item.id === log.ticketId);
+function renderLoginEventItem(event) {
   return `
     <div class="log-row">
-      <b>${escapeHtml(log.action || "—")}</b>
-      <div class="meta">${formatDateTime(log.at)} · ${escapeHtml(log.userName || "—")} · ${escapeHtml(log.role || "—")}</div>
-      <div class="history-line"><span>Заявка</span><strong>${escapeHtml(log.crmId || ticket?.crmId || "—")} · ${ticket ? orderNumberLabel(ticket) : escapeHtml(log.orderNumber || "—")}</strong></div>
-      <div class="history-line"><span>Було</span><strong>${escapeHtml(log.previousValue || "—")}</strong></div>
-      <div class="history-line"><span>Стало</span><strong>${escapeHtml(log.newValue || "—")}</strong></div>
+      <div class="copy-row">
+        <b>${escapeHtml(event.login || "—")}</b>
+        <span class="login-status ${event.success ? "login-ok" : "login-fail"}">${event.success ? "Успішний" : "Невдалий"}</span>
+      </div>
+      <div class="history-line"><span>Користувач</span><strong>${escapeHtml(event.userName || "—")} · ${escapeHtml(event.role || "—")}</strong></div>
+      <div class="history-line"><span>IP</span><strong>${escapeHtml(event.ipAddress || "—")}</strong></div>
+      <div class="history-line"><span>Пристрій</span><strong>${escapeHtml(event.device || "—")}</strong></div>
+      <div class="meta">${formatDateTime(event.at)}</div>
     </div>
   `;
 }
 
-function setAuditFilter(key, value) {
+function setLoginEventFilter(key, value) {
   view[key] = value;
   render();
 }
@@ -2331,9 +2437,11 @@ async function login(event) {
   }
   if (!user) user = state.users.find((item) => item.login === loginValue && item.password === passwordValue && item.active);
   if (!user) {
+    await logLoginAttempt(loginValue, false);
     byId("loginError").textContent = "Невірний логін або пароль.";
     return;
   }
+  await logLoginAttempt(loginValue, true);
   sessionUserId = user.id;
   localStorage.setItem("moow_lexie_session", user.id);
   view = { page: "dashboard", selectedId: null, filter: {}, mine: false, tab: "Картка" };
@@ -2350,6 +2458,7 @@ function logout() {
 
 function copyText(value) {
   navigator.clipboard?.writeText(value);
+  showToast("Скопійовано");
 }
 
 function autoDate(input) {
@@ -2409,7 +2518,7 @@ Object.assign(window, {
   saveTicketEdits,
   saveWarehouseDraft,
   setFilter,
-  setAuditFilter,
+  setLoginEventFilter,
   setPage,
   setStatsDate,
   setStatsPeriod,

@@ -108,6 +108,16 @@ create table if not exists public.audit_logs (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.login_events (
+  id uuid primary key default gen_random_uuid(),
+  login text not null,
+  success boolean not null default false,
+  user_id uuid references public.app_users(id) on delete set null,
+  device text,
+  ip_address text,
+  created_at timestamptz not null default now()
+);
+
 create or replace function public.touch_updated_at()
 returns trigger
 language plpgsql
@@ -202,6 +212,7 @@ alter table public.directory_reasons enable row level security;
 alter table public.tickets enable row level security;
 alter table public.ticket_comments enable row level security;
 alter table public.audit_logs enable row level security;
+alter table public.login_events enable row level security;
 
 drop policy if exists "profiles: read own" on public.app_users;
 create policy "profiles: read own"
