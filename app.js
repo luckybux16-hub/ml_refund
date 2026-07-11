@@ -852,24 +852,29 @@ function renderTickets(user) {
       </div>
     </section>
     <section class="section">
-      <div class="grid">${tickets.length ? tickets.map(renderTicketCard).join("") : `<div class="empty">Нічого не знайдено</div>`}</div>
+      <div id="ticketsGrid" class="grid">${renderTicketList(tickets)}</div>
     </section>
   `;
 }
 
-function setFilter(key, value) {
-  const activeId = document.activeElement?.id || "";
-  const cursor = document.activeElement && "selectionStart" in document.activeElement ? document.activeElement.selectionStart : null;
-  view.filter[key] = value;
-  render();
-  if (activeId) {
-    setTimeout(() => {
-      const input = byId(activeId);
-      if (!input) return;
-      input.focus();
-      if (cursor != null && "setSelectionRange" in input) input.setSelectionRange(cursor, cursor);
-    }, 0);
+function renderTicketList(tickets = visibleTickets()) {
+  return tickets.length ? tickets.map(renderTicketCard).join("") : `<div class="empty">Нічого не знайдено</div>`;
+}
+
+function refreshTicketList() {
+  const grid = byId("ticketsGrid");
+  if (!grid) {
+    render();
+    return;
   }
+  grid.innerHTML = renderTicketList();
+  hydrateInlineActions(grid);
+}
+
+function setFilter(key, value) {
+  view.filter[key] = value;
+  if (view.page === "tickets") refreshTicketList();
+  else render();
 }
 
 function toggleMine() {
@@ -2533,6 +2538,9 @@ async function boot() {
   if (isRemoteSession()) {
     try {
       await loadRemoteData();
+      const user = currentUser();
+      if (user) await logLoginAttempt(user.login, true);
+      if (user?.role === "admin") await loadRemoteData().catch(() => null);
     } catch (error) {
       authToken = "";
       localStorage.removeItem(AUTH_TOKEN_KEY);
