@@ -538,6 +538,7 @@ function applyFilters(ticket) {
   if (f.type && ticket.type !== f.type) return false;
   if (f.fop && ticket.managerFop !== f.fop && ticket.warehouseFop !== f.fop) return false;
   if (f.paymentMethod && ticket.paymentMethod !== f.paymentMethod) return false;
+  if (f.overdue && !isOverdueTicket(ticket)) return false;
   if (f.manager && ticket.managerUserId !== f.manager) return false;
   if (f.reason && ticket.reason !== f.reason) return false;
   if (view.mine && !isMine(ticket)) return false;
@@ -653,7 +654,7 @@ function renderNav(user) {
   ];
   if (user.role !== "manager" && user.role !== "warehouse") items.push(["stats", "Статистика"]);
   if (user.role === "admin") {
-    items.push(["directories", "Довідники"], ["users", "Користувачі"], ["settings", "Налаштування"]);
+    items.push(["audit", "Журнал"], ["directories", "Довідники"], ["users", "Користувачі"], ["settings", "Налаштування"]);
   }
   return `<nav class="nav">${items.map(([page, label]) => `<button class="${view.page === page ? "active" : ""}" onclick="setPage('${page}')">${label}</button>`).join("")}</nav>`;
 }
@@ -664,6 +665,7 @@ function renderPage(user) {
   if (view.page === "create") return renderTicketForm(user);
   if (view.page === "ticket") return renderTicketDetails(user);
   if (view.page === "stats") return renderStats(user);
+  if (view.page === "audit") return renderAuditLog();
   if (view.page === "directories") return renderDirectories();
   if (view.page === "users") return renderUsers();
   if (view.page === "settings") return renderSettings();
@@ -690,13 +692,13 @@ function dashboardActionableTickets(user) {
 function dashboardCards(user) {
   const tickets = dashboardActionableTickets(user);
   const today = todayKey();
-  const stale = tickets.filter((ticket) => !isFinalStatus(ticket.status) && Date.now() - new Date(ticket.updatedAt).getTime() > 3 * 24 * 60 * 60 * 1000).length;
+  const stale = tickets.filter(isOverdueTicket).length;
   if (user.role === "warehouse") {
     return [
       ["Чернетки", tickets.filter((t) => t.status === STATUSES.draft && t.warehouseUserId === user.id).length, STATUSES.draft],
       ["На доопрацюванні", tickets.filter((t) => t.status === STATUSES.rework && t.reworkTarget === "warehouse").length, STATUSES.rework],
       ["Потрібно обробити", tickets.length, ""],
-      ["Сьогодні", tickets.filter((t) => t.createdAt.slice(0, 10) === today).length, ""],
+      ["Прострочені", stale, "overdue"],
     ];
   }
   if (user.role === "manager") {
@@ -704,7 +706,7 @@ function dashboardCards(user) {
       ["До перевірки потрібно оформити", tickets.filter((t) => t.status === STATUSES.new).length, STATUSES.new],
       ["На доопрацюванні", tickets.filter((t) => t.status === STATUSES.rework && t.reworkTarget !== "warehouse").length, STATUSES.rework],
       ["Потрібно обробити", tickets.length, ""],
-      ["Сьогодні", tickets.filter((t) => t.createdAt.slice(0, 10) === today).length, ""],
+      ["Прострочені", stale, "overdue"],
     ];
   }
   if (user.role === "head") {
@@ -712,7 +714,7 @@ function dashboardCards(user) {
       ["На перевірку", tickets.filter((t) => t.status === STATUSES.review).length, STATUSES.review],
       ["Очікують повернення", tickets.filter((t) => t.status === STATUSES.money).length, STATUSES.money],
       ["Потрібно обробити", tickets.length, ""],
-      ["Потребують уваги", stale, "stale"],
+      ["Прострочені", stale, "overdue"],
     ];
   }
   if (user.role === "accountant") {
@@ -720,12 +722,13 @@ function dashboardCards(user) {
       ["Повернення коштів", tickets.filter((t) => t.status === STATUSES.money).length, STATUSES.money],
       ["Потрібно обробити", tickets.length, ""],
       ["Сума до виплати", money(tickets.reduce((sum, t) => sum + finalAmount(t), 0)), ""],
-      ["Сьогодні", tickets.filter((t) => t.createdAt.slice(0, 10) === today).length, ""],
+      ["Прострочені", stale, "overdue"],
     ];
   }
   return [
     ["Користувачі", state.users.length, ""],
     ["Активні заявки", tickets.filter((t) => !isFinalStatus(t.status)).length, ""],
+    ["Прострочені", stale, "overdue"],
     ["Повернення", tickets.filter((t) => t.type === "Повернення").length, ""],
     ["Обміни", tickets.filter((t) => t.type === "Обмін").length, ""],
     ["Відмови", tickets.filter((t) => t.type === "Відмова на пошті").length, ""],
@@ -757,6 +760,7 @@ function renderDashboard(user) {
 
 function filterByStatus(status) {
   view.filter = {};
+  if (status === "overdue") view.filter.overdue = true;
   if (status && Object.values(STATUSES).includes(status)) view.filter.status = status;
   view.page = "tickets";
   render();
@@ -815,7 +819,7 @@ function renderTicketCard(ticket) {
           <div class="ticket-title">${ticket.crmId || "Чернетка"} · ${orderNumberLabel(ticket)}</div>
           <div class="meta">${ticket.brand} · ${ticket.type} · ${formatDateTime(ticket.createdAt)}</div>
         </div>
-        ${badge(ticket.status)}
+        <div class="ticket-status-stack">${badge(ticket.status)}${isOverdueTicket(ticket) ? `<span class="sla-badge">Прострочено ${overdueText(ticket)}</span>` : ""}</div>
       </div>
       <div class="kv">
         <div><span>ПІБ</span><b>${ticket.clientName || "—"}</b></div>
@@ -826,6 +830,31 @@ function renderTicketCard(ticket) {
       </div>
     </article>
   `;
+}
+
+function slaHoursFor(ticket) {
+  if ([STATUSES.new, STATUSES.review, STATUSES.money, STATUSES.rework].includes(ticket.status)) return 24;
+  if (ticket.status === STATUSES.draft) return 72;
+  return 0;
+}
+
+function ageHours(ticket) {
+  const source = ticket.updatedAt || ticket.createdAt;
+  if (!source) return 0;
+  return Math.max(0, (Date.now() - new Date(source).getTime()) / 36e5);
+}
+
+function isOverdueTicket(ticket) {
+  const limit = slaHoursFor(ticket);
+  return Boolean(limit && !isFinalStatus(ticket.status) && ageHours(ticket) > limit);
+}
+
+function overdueText(ticket) {
+  const limit = slaHoursFor(ticket);
+  const hours = Math.floor(Math.max(0, ageHours(ticket) - limit));
+  if (hours < 24) return `${hours || 1} год`;
+  const days = Math.floor(hours / 24);
+  return `${days} дн`;
 }
 
 function orderNumberLabel(ticket) {
@@ -1899,6 +1928,7 @@ function renderStats(user) {
         </select>
         <input type="date" value="${view.statsFrom || ""}" onchange="setStatsDate('statsFrom', this.value)" ${view.statsPeriod === "custom" ? "" : "disabled"} />
         <input type="date" value="${view.statsTo || ""}" onchange="setStatsDate('statsTo', this.value)" ${view.statsPeriod === "custom" ? "" : "disabled"} />
+        <button class="ghost" onclick="exportStatsCsv()">Експорт CSV</button>
       </div>
       <div class="stats-grid">
         <div class="stat-card"><span>Кількість заявок</span><strong>${tickets.length}</strong></div>
@@ -1920,6 +1950,57 @@ function renderStats(user) {
   `;
 }
 
+function renderAuditLog() {
+  const rows = filterAuditLogs(state.logs);
+  return `
+    <section class="section">
+      <h2>Журнал дій</h2>
+      <div class="toolbar">
+        <input id="auditSearch" placeholder="Пошук у журналі" value="${view.auditSearch || ""}" oninput="setAuditFilter('auditSearch', this.value)" />
+        <input type="date" value="${view.auditFrom || ""}" onchange="setAuditFilter('auditFrom', this.value)" />
+        <input type="date" value="${view.auditTo || ""}" onchange="setAuditFilter('auditTo', this.value)" />
+      </div>
+    </section>
+    <section class="section grid">
+      ${rows.length ? rows.map(renderAuditItem).join("") : `<div class="empty">Журнал порожній</div>`}
+    </section>
+  `;
+}
+
+function filterAuditLogs(logs) {
+  const search = (view.auditSearch || "").toLowerCase();
+  const from = view.auditFrom ? new Date(`${view.auditFrom}T00:00:00`) : null;
+  const to = view.auditTo ? new Date(`${view.auditTo}T23:59:59`) : null;
+  return logs.filter((log) => {
+    const at = new Date(log.at);
+    if (from && at < from) return false;
+    if (to && at > to) return false;
+    if (search) {
+      const haystack = [log.userName, log.role, log.action, log.previousValue, log.newValue, log.crmId, log.orderNumber].join(" ").toLowerCase();
+      if (!haystack.includes(search)) return false;
+    }
+    return true;
+  });
+}
+
+function renderAuditItem(log) {
+  const ticket = state.tickets.find((item) => item.id === log.ticketId);
+  return `
+    <div class="log-row">
+      <b>${escapeHtml(log.action || "—")}</b>
+      <div class="meta">${formatDateTime(log.at)} · ${escapeHtml(log.userName || "—")} · ${escapeHtml(log.role || "—")}</div>
+      <div class="history-line"><span>Заявка</span><strong>${escapeHtml(log.crmId || ticket?.crmId || "—")} · ${ticket ? orderNumberLabel(ticket) : escapeHtml(log.orderNumber || "—")}</strong></div>
+      <div class="history-line"><span>Було</span><strong>${escapeHtml(log.previousValue || "—")}</strong></div>
+      <div class="history-line"><span>Стало</span><strong>${escapeHtml(log.newValue || "—")}</strong></div>
+    </div>
+  `;
+}
+
+function setAuditFilter(key, value) {
+  view[key] = value;
+  render();
+}
+
 function setStatsPeriod(period) {
   view.statsPeriod = period;
   render();
@@ -1929,6 +2010,51 @@ function setStatsDate(key, value) {
   view[key] = value;
   view.statsPeriod = "custom";
   render();
+}
+
+function exportStatsCsv() {
+  const user = currentUser();
+  const tickets = filterStatsTickets(state.tickets.filter((ticket) => canSeeTicket(user, ticket) && ticket.status !== STATUSES.deleted));
+  const rows = [
+    ["CRM ID", "Номер замовлення", "Бренд", "Тип", "Статус", "ПІБ", "Товар", "Причина", "ФОП складу", "ФОП менеджера", "Спосіб оплати", "Фінальна сума", "Менеджер", "Керівник", "Бухгалтер", "Створено", "Оновлено"],
+    ...tickets.map((ticket) => [
+      ticket.crmId || "",
+      ticket.orderNumber || "",
+      ticket.brand || "",
+      ticket.type || "",
+      ticket.status || "",
+      ticket.clientName || "",
+      ticket.returnedProduct || "",
+      ticket.reason || "",
+      ticket.warehouseFop || "",
+      ticket.managerFop || "",
+      ticket.paymentMethod || "",
+      finalAmount(ticket).toFixed(2),
+      userName(ticket.managerUserId),
+      userName(ticket.reviewerUserId),
+      userName(ticket.accountantUserId),
+      ticket.createdAt || "",
+      ticket.updatedAt || "",
+    ]),
+  ];
+  downloadTextFile(`crm-stats-${todayKey()}.csv`, rows.map((row) => row.map(csvCell).join(",")).join("\n"), "text/csv;charset=utf-8");
+}
+
+function csvCell(value) {
+  const text = String(value ?? "").replace(/"/g, '""');
+  return `"${text}"`;
+}
+
+function downloadTextFile(filename, content, type) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 function filterStatsTickets(tickets) {
@@ -2265,6 +2391,7 @@ Object.assign(window, {
   deleteTicket,
   deleteDraft,
   downloadBackup,
+  exportStatsCsv,
   filterByStatus,
   headApprove,
   headCompleteNoRefund,
@@ -2282,6 +2409,7 @@ Object.assign(window, {
   saveTicketEdits,
   saveWarehouseDraft,
   setFilter,
+  setAuditFilter,
   setPage,
   setStatsDate,
   setStatsPeriod,

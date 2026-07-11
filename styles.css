@@ -367,6 +367,12 @@ textarea[readonly] {
   align-items: flex-start;
 }
 
+.ticket-status-stack {
+  display: grid;
+  justify-items: end;
+  gap: 6px;
+}
+
 .ticket-title {
   font-weight: 800;
 }
@@ -408,6 +414,19 @@ textarea[readonly] {
   min-height: 28px;
   padding: 4px 9px;
   border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.sla-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #fff4d6;
+  color: #8a4b00;
   font-size: 12px;
   font-weight: 800;
   white-space: nowrap;
