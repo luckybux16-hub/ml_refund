@@ -38,6 +38,28 @@ async function saveTicket(supabase, ticket) {
   return data;
 }
 
+async function findDuplicateOrder(supabase, ticket) {
+  const orderNumber = String(ticket.order_number || "").trim();
+  if (!orderNumber) return null;
+
+  let query = supabase
+    .from("tickets")
+    .select("id, crm_id, order_number, brand, status")
+    .eq("order_number", orderNumber)
+    .neq("status", STATUSES.deleted)
+    .limit(1);
+
+  if (ticket.id) query = query.neq("id", ticket.id);
+  const { data, error } = await query;
+  if (error) throw error;
+  return data?.[0] || null;
+}
+
+function duplicateOrderError(duplicate) {
+  if (!duplicate) return "";
+  return `Схожа заявка вже існує: ${duplicate.crm_id || "чернетка"} · №${duplicate.order_number} · ${duplicate.brand} · ${duplicate.status}`;
+}
+
 export default async function handler(req, res) {
   try {
     const { profile, supabase } = await getAuthenticatedProfile(req);
@@ -53,6 +75,8 @@ export default async function handler(req, res) {
     const ticket = body.ticket || {};
 
     if (action === "saveDraft") {
+      const duplicate = await findDuplicateOrder(supabase, ticket);
+      if (duplicate) return json(res, 400, { error: duplicateOrderError(duplicate) });
       const saved = await saveTicket(supabase, {
         ...ticket,
         status: STATUSES.draft,
@@ -66,6 +90,8 @@ export default async function handler(req, res) {
     if (action === "submitWarehouseDraft") {
       const errors = validateWarehouse(ticket, false);
       if (errors.length) return json(res, 400, { errors });
+      const duplicate = await findDuplicateOrder(supabase, ticket);
+      if (duplicate) return json(res, 400, { error: duplicateOrderError(duplicate) });
       const saved = await saveTicket(supabase, {
         ...ticket,
         status: STATUSES.fresh,

@@ -901,7 +901,7 @@ function renderTicketCard(ticket) {
         <div><span>Товар</span><b>${ticket.returnedProduct || "—"}</b></div>
         <div><span>Фінальна сума</span><b>${hasWarehouseMoney(ticket) || isPreShipmentRefusal(ticket) ? money(finalAmount(ticket)) : "—"}</b></div>
         <div><span>Відповідальний</span><b>${responsibleName(ticket)}</b></div>
-        <div><span>Очікується дія від</span><b>${expectedActionFrom(ticket) || "—"}</b></div>
+        <div><span>Очікується дія від</span>${expectedActionBadge(ticket)}</div>
       </div>
     </article>
   `;
@@ -943,6 +943,18 @@ function expectedActionFrom(ticket) {
   if (ticket.status === STATUSES.review) return "керівника";
   if (ticket.status === STATUSES.money) return "бухгалтера";
   return "";
+}
+
+function expectedActionBadge(ticket) {
+  const value = expectedActionFrom(ticket);
+  if (!value) return `<b>—</b>`;
+  const key = {
+    складу: "warehouse",
+    офісу: "office",
+    керівника: "head",
+    бухгалтера: "accountant",
+  }[value] || "default";
+  return `<span class="expected-badge expected-${key}">${escapeHtml(value)}</span>`;
 }
 
 function responsibleName(ticket) {
@@ -1060,6 +1072,21 @@ function validateWarehouse(ticket, draft = false) {
   return errors;
 }
 
+function findDuplicateOrder(ticket) {
+  const orderNumber = String(ticket.orderNumber || "").trim();
+  if (!orderNumber) return null;
+  return state.tickets.find((item) => {
+    if (item.id === ticket.id) return false;
+    if (item.status === STATUSES.deleted) return false;
+    return String(item.orderNumber || "").trim() === orderNumber;
+  }) || null;
+}
+
+function duplicateOrderMessage(duplicate) {
+  if (!duplicate) return "";
+  return `Схожа заявка вже існує: ${duplicate.crmId || "чернетка"} · №${duplicate.orderNumber} · ${duplicate.brand} · ${duplicate.status}`;
+}
+
 function requiredLabel(key) {
   return {
     brand: "Бренд",
@@ -1079,6 +1106,13 @@ async function saveNewTicket(event, draft = false) {
   if (errors.length) {
     const target = byId("formErrors");
     target.textContent = `Заповніть або виправте: ${errors.join(", ")}`;
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    return;
+  }
+  const duplicate = findDuplicateOrder(ticket);
+  if (duplicate) {
+    const target = byId("formErrors");
+    target.textContent = duplicateOrderMessage(duplicate);
     target.scrollIntoView({ behavior: "smooth", block: "center" });
     return;
   }
@@ -1476,6 +1510,8 @@ function readWarehouseDraftOverlay(ticket) {
 async function saveWarehouseDraft(id) {
   const ticket = state.tickets.find((item) => item.id === id);
   const updated = readWarehouseDraftOverlay(ticket);
+  const duplicate = findDuplicateOrder(updated);
+  if (duplicate) return showActionErrors([duplicateOrderMessage(duplicate)]);
   const changes = describeChanges(ticket, updated);
   Object.assign(ticket, updated);
   if (isRemoteSession()) {
@@ -1498,6 +1534,8 @@ async function submitWarehouseDraft(id) {
   Object.assign(ticket, readWarehouseDraftOverlay(ticket));
   const errors = validateWarehouse(ticket, false);
   if (errors.length) return showActionErrors(errors);
+  const duplicate = findDuplicateOrder(ticket);
+  if (duplicate) return showActionErrors([duplicateOrderMessage(duplicate)]);
   if (isRemoteSession()) {
     try {
       await remoteTicketAction("submitWarehouseDraft", ticket);
@@ -1918,17 +1956,25 @@ async function markPaid(id) {
 
 function renderHistory(ticket) {
   const rows = state.logs.filter((log) => log.ticketId === ticket.id);
-  return `<section class="section grid">${rows.length ? rows.map(renderHistoryItem).join("") : `<div class="empty">Історія порожня</div>`}</section>`;
+  return `<section class="section history-timeline">${rows.length ? rows.map(renderHistoryItem).join("") : `<div class="empty">Історія порожня</div>`}</section>`;
 }
 
 function renderHistoryItem(log) {
+  const actor = [log.userName || "—", log.role || ""].filter(Boolean).join(" · ");
+  const hasDiff = log.previousValue || log.newValue;
   return `
-    <div class="log-row">
-      <b>${escapeHtml(log.action)}</b>
-      <div class="history-line"><span>Хто</span><strong>${escapeHtml(log.userName || "—")} · ${escapeHtml(log.role || "—")}</strong></div>
-      <div class="history-line"><span>Було</span><strong>${escapeHtml(log.previousValue || "—")}</strong></div>
-      <div class="history-line"><span>Стало</span><strong>${escapeHtml(log.newValue || "—")}</strong></div>
-      <div class="meta">${formatDateTime(log.at)}</div>
+    <div class="history-event">
+      <div class="history-dot"></div>
+      <div class="history-content">
+        <div class="history-title">${formatDateTime(log.at)} · ${escapeHtml(actor)}</div>
+        <b>${escapeHtml(log.action)}</b>
+        ${hasDiff ? `
+          <div class="history-change">
+            <div><span>Було</span><strong>${escapeHtml(log.previousValue || "—")}</strong></div>
+            <div><span>Стало</span><strong>${escapeHtml(log.newValue || "—")}</strong></div>
+          </div>
+        ` : ""}
+      </div>
     </div>
   `;
 }
