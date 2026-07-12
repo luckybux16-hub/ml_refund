@@ -8,18 +8,12 @@ export default async function handler(req, res) {
     const login = String(body.login || "").trim().slice(0, 120);
     if (!login) return json(res, 400, { error: "Missing login" });
 
-    const supabase = createServiceClient();
-    const { data: profile } = await supabase
-      .from("app_users")
-      .select("id")
-      .eq("login", login)
-      .maybeSingle();
-
     const headers = req.headers || {};
+    const supabase = createServiceClient();
     const { error } = await supabase.from("login_events").insert({
       login,
       success: Boolean(body.success),
-      user_id: profile?.id || null,
+      user_id: null,
       device: headers["user-agent"] || "",
       ip_address: String(headers["x-forwarded-for"] || "").split(",")[0] || "",
     });
