@@ -403,6 +403,22 @@ textarea[readonly] {
   padding: 0 14px;
 }
 
+.stats-toolbar {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.stats-toolbar > * {
+  width: 100%;
+  min-width: 0;
+  flex: initial;
+}
+
+.stats-toolbar input[type="date"] {
+  min-height: 48px;
+}
+
 .section {
   margin-top: 16px;
 }
@@ -831,6 +847,11 @@ textarea[readonly] {
 }
 
 @media (min-width: 720px) {
+  .stats-toolbar {
+    grid-template-columns: minmax(180px, 1fr) minmax(160px, 1fr) minmax(160px, 1fr) minmax(170px, 1fr);
+    gap: 12px;
+  }
+
   .stats-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }

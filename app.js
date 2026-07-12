@@ -840,7 +840,7 @@ function renderTickets(user) {
   const tickets = visibleTickets();
   return `
     <section class="section">
-      <div class="toolbar">
+      <div class="toolbar stats-toolbar">
         <input id="ticketSearch" placeholder="Пошук" value="${view.filter.search || ""}" oninput="setFilter('search', this.value)" />
         ${brandSelectControl("ticketFilterBrand", "Бренд", view.filter.brand, `onchange="setFilter('brand', this.value); updateBrandSelectTheme()"`, true)}
         <select onchange="setFilter('status', this.value)">${option("", "Статус")}${Object.values(STATUSES).map((s) => option(s, s, view.filter.status)).join("")}</select>
@@ -2030,8 +2030,8 @@ function renderStats(user) {
           ${option("year", "Цей рік", view.statsPeriod || "all")}
           ${option("custom", "Вибрати дати", view.statsPeriod || "all")}
         </select>
-        <input type="date" value="${view.statsFrom || ""}" onchange="setStatsDate('statsFrom', this.value)" ${view.statsPeriod === "custom" ? "" : "disabled"} />
-        <input type="date" value="${view.statsTo || ""}" onchange="setStatsDate('statsTo', this.value)" ${view.statsPeriod === "custom" ? "" : "disabled"} />
+        <input type="date" value="${view.statsFrom || ""}" onchange="setStatsDate('statsFrom', this.value)" />
+        <input type="date" value="${view.statsTo || ""}" onchange="setStatsDate('statsTo', this.value)" />
         <button class="ghost" onclick="exportStatsCsv()">Експорт CSV</button>
       </div>
       <div class="stats-grid">
