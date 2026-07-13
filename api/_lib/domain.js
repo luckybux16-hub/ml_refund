@@ -31,6 +31,10 @@ export function needsMainCrmReturnStatus(ticket) {
   return managerNeedsFullPayment(ticket) && !isPreShipmentRefusal(ticket);
 }
 
+export function needsMainCrmRefusalStatus(ticket) {
+  return isPreShipmentRefusal(ticket);
+}
+
 export function canSeeTicket(profile, ticket) {
   if (ticket.status === STATUSES.deleted) return profile.role === "admin";
   if (profile.role === "admin") return true;
@@ -111,6 +115,9 @@ export function validateManager(ticket) {
 
   if (needsMainCrmReturnStatus(ticket) && !ticket.main_crm_return_status) {
     errors.push("main_crm_return_status");
+  }
+  if (needsMainCrmRefusalStatus(ticket) && !ticket.main_crm_return_status) {
+    errors.push("main_crm_refusal_status");
   }
 
   return errors;

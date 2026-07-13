@@ -500,6 +500,10 @@ function needsMainCrmReturnStatus(ticket) {
   return managerNeedsFullPayment(ticket) && !isPreShipmentRefusal(ticket);
 }
 
+function needsMainCrmRefusalStatus(ticket) {
+  return isPreShipmentRefusal(ticket);
+}
+
 function isPreShipmentRefusal(ticket) {
   return ticket.type === "Відмова до відправки";
 }
@@ -1341,6 +1345,7 @@ function renderPaymentFields(ticket, canEdit) {
     ${showRequisites ? editableInput("receiverName", "ПІБ отримувача", "text", ticket.receiverName, canEdit) : ""}
     <div class="field"><label>Призначення платежу</label><input readonly value="${escapeHtml(purpose || ticket.paymentPurpose || "")}" /></div>
     ${needsMainCrmReturnStatus(ticket) ? `<label class="checkbox full"><input id="mainCrmReturnStatus" type="checkbox" ${ticket.mainCrmReturnStatus ? "checked" : ""} ${canEdit ? "" : "disabled"} /><span>Статус «Повернення товару» встановлено</span></label>` : ""}
+    ${needsMainCrmRefusalStatus(ticket) ? `<label class="checkbox full"><input id="mainCrmReturnStatus" type="checkbox" ${ticket.mainCrmReturnStatus ? "checked" : ""} ${canEdit ? "" : "disabled"} /><span>В CRM проставлено статус «Відмова»</span></label>` : ""}
   `;
 }
 
@@ -1737,6 +1742,7 @@ function validateManager(ticket) {
   if (ticket.iban && !/^UA[A-Z0-9]{27}$/.test(ticket.iban)) errors.push("IBAN у форматі UA + 27 символів");
   if (ticket.taxId && !/^\d{10}$/.test(ticket.taxId)) errors.push("ІПН рівно 10 цифр");
   if (needsMainCrmReturnStatus(ticket) && !ticket.mainCrmReturnStatus) errors.push("Статус «Повернення товару»");
+  if (needsMainCrmRefusalStatus(ticket) && !ticket.mainCrmReturnStatus) errors.push("Статус «Відмова» в CRM");
   return errors;
 }
 
