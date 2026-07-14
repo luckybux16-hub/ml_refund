@@ -609,9 +609,58 @@ function isMine(ticket) {
   return false;
 }
 
-function setPage(page, selectedId = null) {
+const TAB_TO_ROUTE = {
+  "Картка": "card",
+  "Історія": "history",
+  "Коментарі": "comments",
+};
+
+const ROUTE_TO_TAB = Object.fromEntries(Object.entries(TAB_TO_ROUTE).map(([tab, route]) => [route, tab]));
+const ROUTED_PAGES = new Set(["dashboard", "tickets", "create", "stats", "logins", "directories", "users", "settings"]);
+
+function hashForView() {
+  if (view.page === "ticket" && view.selectedId) {
+    const tabRoute = TAB_TO_ROUTE[view.tab || "Картка"] || "card";
+    return `#ticket/${encodeURIComponent(view.selectedId)}/${tabRoute}`;
+  }
+  return `#${ROUTED_PAGES.has(view.page) ? view.page : "dashboard"}`;
+}
+
+function syncHash() {
+  const nextHash = hashForView();
+  if (window.location.hash !== nextHash) window.location.hash = nextHash;
+}
+
+function applyViewFromHash() {
+  const raw = decodeURIComponent((window.location.hash || "").replace(/^#/, ""));
+  if (!raw) return false;
+  const [page, selectedId, tabRoute] = raw.split("/");
+  if (page === "ticket" && selectedId) {
+    view.page = "ticket";
+    view.selectedId = selectedId;
+    view.tab = ROUTE_TO_TAB[tabRoute] || "Картка";
+    return true;
+  }
+  if (ROUTED_PAGES.has(page)) {
+    view.page = page;
+    view.selectedId = null;
+    if (page !== "ticket") view.tab = "Картка";
+    return true;
+  }
+  return false;
+}
+
+function setPage(page, selectedId = null, tab = "Картка") {
   view.page = page;
   view.selectedId = selectedId;
+  view.tab = page === "ticket" ? tab : "Картка";
+  syncHash();
+  render();
+}
+
+function setTicketTab(tab) {
+  view.tab = tab;
+  syncHash();
   render();
 }
 
@@ -659,6 +708,10 @@ function hydrateInlineActions(root) {
 function render() {
   const user = currentUser();
   if (!user) return renderLogin();
+  if (!canAccessPage(user, view.page)) {
+    view = { ...view, page: "dashboard", selectedId: null, tab: "Картка" };
+    syncHash();
+  }
   app.innerHTML = `
     <div class="shell">
       <header class="topbar">
@@ -679,6 +732,15 @@ function render() {
   if (view.page === "create") setTimeout(updateCreateVisibility, 0);
   if (view.page === "ticket") setTimeout(updateDraftVisibility, 0);
   setTimeout(updateBrandSelectTheme, 0);
+}
+
+function canAccessPage(user, page) {
+  if (["dashboard", "tickets"].includes(page)) return true;
+  if (page === "ticket") return true;
+  if (page === "create") return canCreateTicket(user);
+  if (page === "stats") return user.role !== "manager" && user.role !== "warehouse";
+  if (["logins", "directories", "users", "settings"].includes(page)) return user.role === "admin";
+  return false;
 }
 
 function renderLogin() {
@@ -1185,12 +1247,15 @@ function renderTicketDetails(user) {
           <h2>${ticket.crmId || "Чернетка"} · ${orderNumberLabel(ticket)}</h2>
           <div class="meta">${ticket.brand} · ${ticket.type} · створено ${formatDateTime(ticket.createdAt)}</div>
         </div>
-        ${badge(ticket.status)}
+        <div class="ticket-status-stack">
+          ${badge(ticket.status)}
+          <button class="ghost copy-link-button" onclick="copyTicketLink('${ticket.id}')">Скопіювати посилання</button>
+        </div>
       </div>
     </section>
     ${renderWorkflowSteps(ticket)}
     <div class="tabs">
-      ${["Картка", "Історія", "Коментарі"].map((tab) => `<button class="${view.tab === tab ? "active" : ""}" onclick="view.tab='${tab}'; render()">${tab}</button>`).join("")}
+      ${["Картка", "Історія", "Коментарі"].map((tab) => `<button class="${view.tab === tab ? "active" : ""}" onclick="setTicketTab('${tab}')">${tab}</button>`).join("")}
     </div>
     ${view.tab === "Історія" ? renderHistory(ticket) : view.tab === "Коментарі" ? renderComments(ticket) : renderCardBlocks(user, ticket, readonly)}
   `;
@@ -2528,7 +2593,7 @@ async function login(event) {
   if (user.role === "admin" && isRemoteSession()) await loadRemoteData().catch(() => null);
   sessionUserId = user.id;
   localStorage.setItem("moow_lexie_session", user.id);
-  view = { page: "dashboard", selectedId: null, filter: {}, mine: false, tab: "Картка" };
+  if (!applyViewFromHash()) view = { page: "dashboard", selectedId: null, filter: {}, mine: false, tab: "Картка" };
   render();
 }
 
@@ -2540,6 +2605,12 @@ function logout() {
 function copyText(value) {
   navigator.clipboard?.writeText(value);
   showToast("Скопійовано");
+}
+
+function copyTicketLink(ticketId) {
+  const tabRoute = TAB_TO_ROUTE[view.tab || "Картка"] || "card";
+  const url = `${window.location.origin}${window.location.pathname}#ticket/${encodeURIComponent(ticketId)}/${tabRoute}`;
+  copyText(url);
 }
 
 function autoDate(input) {
@@ -2578,6 +2649,7 @@ Object.assign(window, {
   autoDate,
   autoTime,
   copyText,
+  copyTicketLink,
   deleteTicket,
   deleteDraft,
   downloadBackup,
@@ -2602,6 +2674,7 @@ Object.assign(window, {
   setFilter,
   setLoginEventFilter,
   setPage,
+  setTicketTab,
   setStatsDate,
   setStatsPeriod,
   submitWarehouseDraft,
@@ -2631,7 +2704,13 @@ async function boot() {
       clearSession();
     }
   }
+  applyViewFromHash();
   render();
 }
+
+window.addEventListener("hashchange", () => {
+  if (!currentUser()) return;
+  if (applyViewFromHash()) render();
+});
 
 boot();

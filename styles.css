@@ -478,6 +478,12 @@ textarea[readonly] {
   gap: 6px;
 }
 
+.copy-link-button {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
 .ticket-title {
   font-weight: 800;
 }
