@@ -840,7 +840,7 @@ function render() {
             <div class="role-line">${user.name} · ${ROLES[user.role]} · ${user.brands.join(", ")}</div>
           </div>
           ${systemStatusMarkup()}
-          <button class="ghost" onclick="logout()">Вийти</button>
+          <button class="ghost logout-button" onclick="logout()">Вийти</button>
         </div>
         ${renderNav(user)}
       </header>

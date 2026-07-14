@@ -1073,13 +1073,26 @@ textarea[readonly] {
 }
 
 @media (max-width: 520px) {
+  .topbar {
+    position: static;
+  }
+
   .topbar-inner {
     grid-template-columns: 1fr auto;
+    padding-bottom: 8px;
   }
 
   .system-status {
     grid-column: 1 / -1;
     justify-content: flex-start;
+  }
+
+  .logout-button {
+    display: none;
+  }
+
+  .nav {
+    padding-bottom: 8px;
   }
 
   .copy-row {
