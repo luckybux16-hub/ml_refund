@@ -843,12 +843,16 @@ function render() {
     <div class="shell">
       <header class="topbar">
         <div class="topbar-inner">
-          <div>
-            <h1 class="brand-title">MOOW / LEXIE CRM</h1>
-            <div class="role-line">${user.name} · ${ROLES[user.role]} · ${user.brands.join(", ")}</div>
+          <div class="topbar-main">
+            <div class="topbar-title-row">
+              <div>
+                <h1 class="brand-title">MOOW / LEXIE CRM</h1>
+                <div class="role-line">${user.name} · ${ROLES[user.role]} · ${user.brands.join(", ")}</div>
+              </div>
+              <button class="ghost logout-button" onclick="logout()" title="Вийти"><span class="action-icon">${actionIcon("logout")}</span><span class="action-label">Вийти</span></button>
+            </div>
+            ${systemStatusMarkup()}
           </div>
-          ${systemStatusMarkup()}
-          <button class="ghost logout-button" onclick="logout()" title="Вийти"><span class="action-icon">${actionIcon("logout")}</span><span class="action-label">Вийти</span></button>
         </div>
         ${renderNav(user)}
       </header>

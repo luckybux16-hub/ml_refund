@@ -103,10 +103,18 @@ button.is-busy {
   max-width: 1180px;
   margin: 0 auto;
   padding: 12px 14px;
+}
+
+.topbar-main {
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  gap: 8px;
+}
+
+.topbar-title-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
-  align-items: center;
+  align-items: start;
 }
 
 .brand-title {
@@ -124,7 +132,7 @@ button.is-busy {
 .system-status {
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 6px;
 }
 
@@ -1078,12 +1086,10 @@ textarea[readonly] {
   }
 
   .topbar-inner {
-    grid-template-columns: 1fr auto;
     padding-bottom: 8px;
   }
 
   .system-status {
-    grid-column: 1 / -1;
     justify-content: flex-start;
   }
 
