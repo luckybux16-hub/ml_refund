@@ -121,6 +121,18 @@ function isRemoteSession() {
   return Boolean(authToken);
 }
 
+function allowLocalMode() {
+  const host = window.location.hostname;
+  return !host || ["localhost", "127.0.0.1", "::1"].includes(host) || window.location.protocol === "file:";
+}
+
+function clearSession() {
+  authToken = "";
+  sessionUserId = null;
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+  localStorage.removeItem("moow_lexie_session");
+}
+
 async function getRemoteConfig() {
   if (!remoteConfigPromise) {
     remoteConfigPromise = fetch("/api/config")
@@ -396,6 +408,7 @@ async function logLoginAttempt(loginValue, success) {
 }
 
 function currentUser() {
+  if (!allowLocalMode() && !isRemoteSession()) return null;
   return state.users.find((user) => user.id === sessionUserId) || null;
 }
 
@@ -1124,7 +1137,12 @@ async function saveNewTicket(event, draft = false) {
     try {
       const payload = await remoteTicketAction(draft ? "saveDraft" : "submitWarehouseDraft", ticket);
       await loadRemoteData();
-      setPage("ticket", payload.ticket.id);
+      if (draft) setPage("ticket", payload.ticket.id);
+      else {
+        view = { page: "dashboard", selectedId: null, filter: {}, mine: false, tab: "Картка" };
+        render();
+        showToast("Передано в офіс");
+      }
     } catch (error) {
       byId("formErrors").textContent = error.message;
     }
@@ -2115,6 +2133,7 @@ function renderLoginEvents() {
         <input id="loginEventSearch" placeholder="Пошук за логіном або пристроєм" value="${view.loginEventSearch || ""}" oninput="setLoginEventFilter('loginEventSearch', this.value)" />
         <input type="date" value="${view.loginEventFrom || ""}" onchange="setLoginEventFilter('loginEventFrom', this.value)" />
         <input type="date" value="${view.loginEventTo || ""}" onchange="setLoginEventFilter('loginEventTo', this.value)" />
+        <button class="ghost" onclick="refreshLoginEvents()">Оновити</button>
       </div>
     </section>
     <section class="section grid">
@@ -2157,6 +2176,18 @@ function renderLoginEventItem(event) {
 function setLoginEventFilter(key, value) {
   view[key] = value;
   render();
+}
+
+async function refreshLoginEvents() {
+  if (!isRemoteSession()) return;
+  try {
+    await loadRemoteData();
+    view.page = "logins";
+    render();
+    showToast("Оновлено");
+  } catch (error) {
+    alert(error.message || "Не вдалося оновити журнал входів");
+  }
 }
 
 function setStatsPeriod(period) {
@@ -2487,7 +2518,7 @@ async function login(event) {
   } catch (error) {
     user = null;
   }
-  if (!user) user = state.users.find((item) => item.login === loginValue && item.password === passwordValue && item.active);
+  if (!user && allowLocalMode()) user = state.users.find((item) => item.login === loginValue && item.password === passwordValue && item.active);
   if (!user) {
     await logLoginAttempt(loginValue, false);
     byId("loginError").textContent = "Невірний логін або пароль.";
@@ -2502,10 +2533,7 @@ async function login(event) {
 }
 
 function logout() {
-  sessionUserId = null;
-  authToken = "";
-  localStorage.removeItem("moow_lexie_session");
-  localStorage.removeItem(AUTH_TOKEN_KEY);
+  clearSession();
   render();
 }
 
@@ -2566,6 +2594,7 @@ Object.assign(window, {
   markPaid,
   removeDirectoryItem,
   render,
+  refreshLoginEvents,
   resetDemo,
   saveNewTicket,
   saveTicketEdits,
@@ -2587,6 +2616,11 @@ Object.assign(window, {
 });
 
 async function boot() {
+  if (!allowLocalMode() && !isRemoteSession()) {
+    clearSession();
+    render();
+    return;
+  }
   if (isRemoteSession()) {
     try {
       await loadRemoteData();
@@ -2594,8 +2628,7 @@ async function boot() {
       if (user) await logLoginAttempt(user.login, true);
       if (user?.role === "admin") await loadRemoteData().catch(() => null);
     } catch (error) {
-      authToken = "";
-      localStorage.removeItem(AUTH_TOKEN_KEY);
+      clearSession();
     }
   }
   render();
