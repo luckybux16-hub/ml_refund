@@ -1,5 +1,6 @@
 const STORAGE_KEY = "moow_lexie_crm_v1";
 const AUTH_TOKEN_KEY = "moow_lexie_auth_token";
+const SAVE_ERRORS_KEY = "moow_lexie_save_errors";
 
 const ROLES = {
   warehouse: "Склад",
@@ -80,6 +81,8 @@ let view = { page: "dashboard", selectedId: null, filter: {}, mine: false, tab: 
 let toastTimer = null;
 let remoteConfigPromise = null;
 let remoteClient = null;
+let saveStatus = { state: "saved", text: "Усі зміни збережено" };
+let connectionStatus = navigator.onLine ? "online" : "offline";
 
 function loadState() {
   const raw = localStorage.getItem(STORAGE_KEY);
@@ -131,6 +134,70 @@ function clearSession() {
   sessionUserId = null;
   localStorage.removeItem(AUTH_TOKEN_KEY);
   localStorage.removeItem("moow_lexie_session");
+}
+
+function setSaveStatus(state, text) {
+  saveStatus = { state, text };
+  updateSystemStatusDom();
+}
+
+function setConnectionStatus(status) {
+  connectionStatus = status;
+  updateSystemStatusDom();
+}
+
+function systemStatusMarkup() {
+  const connectionText = connectionStatus === "online" ? "Онлайн" : "Немає з'єднання";
+  return `
+    <div class="system-status">
+      <span id="connectionStatus" class="status-pill connection-${connectionStatus}">${connectionText}</span>
+      <span id="saveStatus" class="status-pill save-${saveStatus.state}">${escapeHtml(saveStatus.text)}</span>
+    </div>
+  `;
+}
+
+function updateSystemStatusDom() {
+  const connection = byId("connectionStatus");
+  if (connection) {
+    connection.className = `status-pill connection-${connectionStatus}`;
+    connection.textContent = connectionStatus === "online" ? "Онлайн" : "Немає з'єднання";
+  }
+  const save = byId("saveStatus");
+  if (save) {
+    save.className = `status-pill save-${saveStatus.state}`;
+    save.textContent = saveStatus.text;
+  }
+}
+
+function saveErrors() {
+  try {
+    return JSON.parse(localStorage.getItem(SAVE_ERRORS_KEY) || "[]");
+  } catch (error) {
+    return [];
+  }
+}
+
+function recordSaveError(place, error) {
+  const user = currentUser();
+  const entry = {
+    id: crypto.randomUUID(),
+    at: nowIso(),
+    place,
+    message: error?.message || String(error || "Невідома помилка"),
+    userName: user?.name || "",
+    role: user?.role ? ROLES[user.role] : "",
+    page: view.page || "",
+    ticketId: view.selectedId || "",
+  };
+  const next = [entry, ...saveErrors()].slice(0, 50);
+  localStorage.setItem(SAVE_ERRORS_KEY, JSON.stringify(next));
+  setSaveStatus("error", "Помилка збереження");
+}
+
+function clearSaveErrors() {
+  localStorage.removeItem(SAVE_ERRORS_KEY);
+  render();
+  showToast("Журнал очищено");
 }
 
 async function getRemoteConfig() {
@@ -331,15 +398,21 @@ async function loginWithSupabase(loginValue, passwordValue) {
 
 async function loadRemoteData() {
   if (!authToken) return null;
-  const response = await fetch("/api/bootstrap", {
-    headers: {
-      Authorization: `Bearer ${authToken}`,
-    },
-  });
-  if (!response.ok) throw new Error("Failed to load remote data");
-  const payload = await response.json();
-  applyRemotePayload(payload);
-  return payload;
+  try {
+    const response = await fetch("/api/bootstrap", {
+      headers: {
+        Authorization: `Bearer ${authToken}`,
+      },
+    });
+    if (!response.ok) throw new Error("Failed to load remote data");
+    const payload = await response.json();
+    applyRemotePayload(payload);
+    setConnectionStatus("online");
+    return payload;
+  } catch (error) {
+    setConnectionStatus("offline");
+    throw error;
+  }
 }
 
 function applyRemotePayload(payload) {
@@ -361,37 +434,64 @@ function applyRemotePayload(payload) {
 
 async function remoteTicketAction(action, ticket, extra = {}) {
   if (!isRemoteSession()) return null;
-  const response = await fetch("/api/tickets", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${authToken}`,
-    },
-    body: JSON.stringify({
-      action,
-      ticket: ticketToApi(ticket),
-      ...extra,
-    }),
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.errors?.join(", ") || payload.error || "Помилка збереження");
-  return payload;
+  setSaveStatus("saving", "Збереження...");
+  try {
+    const response = await fetch("/api/tickets", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${authToken}`,
+      },
+      body: JSON.stringify({
+        action,
+        ticket: ticketToApi(ticket),
+        ...extra,
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setConnectionStatus("online");
+      const error = new Error(payload.errors?.join(", ") || payload.error || "Помилка збереження");
+      error.serverReached = true;
+      throw error;
+    }
+    setConnectionStatus("online");
+    setSaveStatus("saved", "Усі зміни збережено");
+    return payload;
+  } catch (error) {
+    setConnectionStatus(error.serverReached ? "online" : "offline");
+    recordSaveError(action, error);
+    throw error;
+  }
 }
 
 async function remoteUserRequest(method, body = {}) {
   if (!isRemoteSession()) return null;
-  const response = await fetch("/api/users", {
-    method,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${authToken}`,
-    },
-    body: JSON.stringify(body),
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error || "Помилка збереження користувача");
-  await loadRemoteData();
-  return payload;
+  setSaveStatus("saving", "Збереження...");
+  try {
+    const response = await fetch("/api/users", {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${authToken}`,
+      },
+      body: JSON.stringify(body),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setConnectionStatus("online");
+      const error = new Error(payload.error || "Помилка збереження користувача");
+      error.serverReached = true;
+      throw error;
+    }
+    await loadRemoteData();
+    setSaveStatus("saved", "Усі зміни збережено");
+    return payload;
+  } catch (error) {
+    setConnectionStatus(error.serverReached ? "online" : "offline");
+    recordSaveError(`users:${method}`, error);
+    throw error;
+  }
 }
 
 async function logLoginAttempt(loginValue, success) {
@@ -676,7 +776,16 @@ function hydrateInlineActions(root) {
     element.removeAttribute("onclick");
     element.addEventListener("click", function handleClick(event) {
       event.preventDefault();
-      runInlineAction(code, this, event);
+      if (this.disabled) return;
+      const result = runInlineAction(code, this, event);
+      if (result?.finally) {
+        this.disabled = true;
+        this.classList.add("is-busy");
+        result.finally(() => {
+          this.disabled = false;
+          this.classList.remove("is-busy");
+        });
+      }
     });
   });
 
@@ -700,7 +809,17 @@ function hydrateInlineActions(root) {
     const code = element.getAttribute("onsubmit");
     element.removeAttribute("onsubmit");
     element.addEventListener("submit", function handleSubmit(event) {
-      runInlineAction(code, this, event);
+      const submitter = event.submitter;
+      if (submitter?.disabled) return;
+      const result = runInlineAction(code, this, event);
+      if (result?.finally && submitter) {
+        submitter.disabled = true;
+        submitter.classList.add("is-busy");
+        result.finally(() => {
+          submitter.disabled = false;
+          submitter.classList.remove("is-busy");
+        });
+      }
     });
   });
 }
@@ -720,6 +839,7 @@ function render() {
             <h1 class="brand-title">MOOW / LEXIE CRM</h1>
             <div class="role-line">${user.name} · ${ROLES[user.role]} · ${user.brands.join(", ")}</div>
           </div>
+          ${systemStatusMarkup()}
           <button class="ghost" onclick="logout()">Вийти</button>
         </div>
         ${renderNav(user)}
@@ -2397,6 +2517,7 @@ function renderUserEditor(user) {
 }
 
 function renderSettings() {
+  const errors = saveErrors();
   return `
     <section class="section panel">
       <h2>Налаштування</h2>
@@ -2405,6 +2526,26 @@ function renderSettings() {
         ${isRemoteSession() ? `<button onclick="downloadBackup()">Скачати резервну копію</button>` : `<button class="danger" onclick="resetDemo()">Очистити тестові дані</button>`}
       </div>
     </section>
+    <section class="section panel">
+      <div class="copy-row">
+        <div>
+          <h3>Журнал помилок збереження</h3>
+          <div class="meta">Зберігається у цьому браузері та допомагає швидко зрозуміти, чому дія не збереглась.</div>
+        </div>
+        ${errors.length ? `<button class="ghost" onclick="clearSaveErrors()">Очистити</button>` : ""}
+      </div>
+      ${errors.length ? errors.slice(0, 12).map(renderSaveErrorItem).join("") : `<div class="empty">Помилок збереження поки немає</div>`}
+    </section>
+  `;
+}
+
+function renderSaveErrorItem(error) {
+  return `
+    <div class="save-error-row">
+      <b>${escapeHtml(error.message || "Помилка збереження")}</b>
+      <div class="meta">${formatDateTime(error.at)} · ${escapeHtml(error.userName || "—")} · ${escapeHtml(error.role || "—")}</div>
+      <div class="meta">${escapeHtml(error.place || "—")} · ${escapeHtml(error.page || "—")}${error.ticketId ? ` · ${escapeHtml(error.ticketId)}` : ""}</div>
+    </div>
   `;
 }
 
@@ -2648,6 +2789,7 @@ Object.assign(window, {
   addUser,
   autoDate,
   autoTime,
+  clearSaveErrors,
   copyText,
   copyTicketLink,
   deleteTicket,
@@ -2712,5 +2854,8 @@ window.addEventListener("hashchange", () => {
   if (!currentUser()) return;
   if (applyViewFromHash()) render();
 });
+
+window.addEventListener("online", () => setConnectionStatus("online"));
+window.addEventListener("offline", () => setConnectionStatus("offline"));
 
 boot();
