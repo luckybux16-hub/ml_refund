@@ -1088,6 +1088,15 @@ textarea[readonly] {
   }
 
   .logout-button {
+    width: 38px;
+    min-height: 38px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .logout-button .action-label {
     display: none;
   }
 

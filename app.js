@@ -840,7 +840,7 @@ function render() {
             <div class="role-line">${user.name} · ${ROLES[user.role]} · ${user.brands.join(", ")}</div>
           </div>
           ${systemStatusMarkup()}
-          <button class="ghost logout-button" onclick="logout()">Вийти</button>
+          <button class="ghost logout-button" onclick="logout()" title="Вийти"><span class="action-icon">${actionIcon("logout")}</span><span class="action-label">Вийти</span></button>
         </div>
         ${renderNav(user)}
       </header>
@@ -1649,6 +1649,9 @@ function actionIcon(name) {
   }
   if (name === "copy") {
     return `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="10" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5 15V7a2 2 0 0 1 2-2h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
+  }
+  if (name === "logout") {
+    return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 17l5-5-5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M15 12H3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M21 4v16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
   }
   return "";
 }
