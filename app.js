@@ -682,6 +682,14 @@ function visibleTickets() {
   return state.tickets.filter((ticket) => canSeeTicket(user, ticket)).filter(applyFilters);
 }
 
+function activeTickets() {
+  return visibleTickets().filter((ticket) => !isFinalStatus(ticket.status));
+}
+
+function archiveTickets() {
+  return visibleTickets().filter((ticket) => isFinalStatus(ticket.status) && ticket.status !== STATUSES.deleted);
+}
+
 function applyFilters(ticket) {
   const f = view.filter;
   if (f.search) {
@@ -716,7 +724,7 @@ const TAB_TO_ROUTE = {
 };
 
 const ROUTE_TO_TAB = Object.fromEntries(Object.entries(TAB_TO_ROUTE).map(([tab, route]) => [route, tab]));
-const ROUTED_PAGES = new Set(["dashboard", "tickets", "create", "stats", "logins", "directories", "users", "settings"]);
+const ROUTED_PAGES = new Set(["dashboard", "tickets", "archive", "create", "stats", "logins", "directories", "users", "settings"]);
 
 function hashForView() {
   if (view.page === "ticket" && view.selectedId) {
@@ -855,7 +863,7 @@ function render() {
 }
 
 function canAccessPage(user, page) {
-  if (["dashboard", "tickets"].includes(page)) return true;
+  if (["dashboard", "tickets", "archive"].includes(page)) return true;
   if (page === "ticket") return true;
   if (page === "create") return canCreateTicket(user);
   if (page === "stats") return user.role !== "manager" && user.role !== "warehouse";
@@ -893,6 +901,7 @@ function renderNav(user) {
   const items = [
     ["dashboard", "Dashboard"],
     ["tickets", "Заявки"],
+    ["archive", "Архів"],
   ];
   if (user.role !== "manager" && user.role !== "warehouse") items.push(["stats", "Статистика"]);
   if (user.role === "admin") {
@@ -904,6 +913,7 @@ function renderNav(user) {
 function renderPage(user) {
   if (view.page === "dashboard") return renderDashboard(user);
   if (view.page === "tickets") return renderTickets(user);
+  if (view.page === "archive") return renderArchive(user);
   if (view.page === "create") return renderTicketForm(user);
   if (view.page === "ticket") return renderTicketDetails(user);
   if (view.page === "stats") return renderStats(user);
@@ -1031,12 +1041,13 @@ function filterByStatus(status) {
   view.filter = {};
   if (status === "overdue") view.filter.overdue = true;
   if (status && Object.values(STATUSES).includes(status)) view.filter.status = status;
-  view.page = "tickets";
+  view.page = status && isFinalStatus(status) ? "archive" : "tickets";
+  syncHash();
   render();
 }
 
 function renderTickets(user) {
-  const tickets = visibleTickets();
+  const tickets = activeTickets();
   return `
     <section class="section">
       <div class="toolbar stats-toolbar">
@@ -1056,7 +1067,28 @@ function renderTickets(user) {
   `;
 }
 
-function renderTicketList(tickets = visibleTickets()) {
+function renderArchive(user) {
+  const tickets = archiveTickets();
+  return `
+    <section class="section">
+      <h2>Архів</h2>
+      <div class="toolbar stats-toolbar">
+        <input id="ticketSearch" placeholder="Пошук" value="${view.filter.search || ""}" oninput="setFilter('search', this.value)" />
+        ${brandSelectControl("ticketFilterBrand", "Бренд", view.filter.brand, `onchange="setFilter('brand', this.value); updateBrandSelectTheme()"`, true)}
+        <select onchange="setFilter('status', this.value)">${option("", "Статус")}${[STATUSES.paid, STATUSES.doneNoRefund, STATUSES.rejected].map((s) => option(s, s, view.filter.status)).join("")}</select>
+        <select onchange="setFilter('type', this.value)">${option("", "Тип")}${TYPES.map((t) => option(t, t, view.filter.type)).join("")}</select>
+        <button class="ghost" onclick="toggleMine()">${view.mine ? "Усі доступні" : "Мої заявки"}</button>
+        <select onchange="setFilter('fop', this.value)">${option("", "ФОП")}${state.fops.map((fop) => option(fop, fop, view.filter.fop)).join("")}</select>
+        <select onchange="setFilter('paymentMethod', this.value)">${option("", "Спосіб оплати")}${PAYMENT_METHODS.map((method) => option(method, method, view.filter.paymentMethod)).join("")}</select>
+      </div>
+    </section>
+    <section class="section">
+      <div id="ticketsGrid" class="grid">${renderTicketList(tickets)}</div>
+    </section>
+  `;
+}
+
+function renderTicketList(tickets = (view.page === "archive" ? archiveTickets() : activeTickets())) {
   return tickets.length ? tickets.map(renderTicketCard).join("") : `<div class="empty">Нічого не знайдено</div>`;
 }
 
@@ -1543,8 +1575,8 @@ function renderPaymentFields(ticket, canEdit) {
   const purpose = paymentPurpose(readFormOverlay(ticket));
   const showRequisites = needsPaymentDetails(readFormOverlay(ticket));
   return `
-    ${showRequisites ? editableInput("iban", "IBAN", "text", ticket.iban, canEdit) : ""}
-    ${showRequisites ? editableInput("taxId", "ІПН", "text", ticket.taxId, canEdit) : ""}
+    ${showRequisites ? editableInput("iban", "IBAN", "text", ticket.iban, canEdit, `inputmode="latin" maxlength="29" oninput="autoIban(this)" placeholder="UA..."`) : ""}
+    ${showRequisites ? editableInput("taxId", "ІПН", "text", ticket.taxId, canEdit, `inputmode="numeric" maxlength="10" oninput="autoTaxId(this)" placeholder="10 цифр"`) : ""}
     ${showRequisites ? editableInput("receiverName", "ПІБ отримувача", "text", ticket.receiverName, canEdit) : ""}
     <div class="field"><label>Призначення платежу</label><input readonly value="${escapeHtml(purpose || ticket.paymentPurpose || "")}" /></div>
     ${needsMainCrmReturnStatus(ticket) ? `<label class="checkbox full"><input id="mainCrmReturnStatus" type="checkbox" ${ticket.mainCrmReturnStatus ? "checked" : ""} ${canEdit ? "" : "disabled"} /><span>Статус «Повернення товару» встановлено</span></label>` : ""}
@@ -1687,6 +1719,8 @@ function readFormOverlay(ticket) {
     if (node) copy[id] = node.value;
   });
   if (copy.managerType) copy.type = copy.managerType;
+  copy.iban = String(copy.iban || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 29);
+  copy.taxId = String(copy.taxId || "").replace(/\D/g, "").slice(0, 10);
   const checkbox = byId("mainCrmReturnStatus");
   if (checkbox) copy.mainCrmReturnStatus = checkbox.checked;
   const stockOffer = byId("stockOfferConfirmed");
@@ -1959,6 +1993,7 @@ async function managerSubmit(id) {
   if (errors.length) return showActionErrors(errors);
   const old = ticket.status;
   if (ticket.type === "Відмова на пошті" || (ticket.type === "Обмін" && ["Доплата клієнта", "Без доплат"].includes(ticket.exchangeResult))) {
+    if (!confirmImportant("Завершити заявку без повернення?")) return;
     ticket.status = STATUSES.doneNoRefund;
   } else {
   ticket.status = STATUSES.review;
@@ -1989,6 +2024,10 @@ function showActionErrors(errors) {
   }
 }
 
+function confirmImportant(message) {
+  return confirm(message);
+}
+
 async function headApprove(id) {
   const ticket = state.tickets.find((item) => item.id === id);
   const checks = Array.from({ length: headChecks(ticket).length }, (_, index) => byId(`check${index}`)?.checked);
@@ -2016,6 +2055,7 @@ async function headApprove(id) {
 
 async function headCompleteNoRefund(id) {
   const ticket = state.tickets.find((item) => item.id === id);
+  if (!confirmImportant("Завершити заявку без повернення?")) return;
   const checks = Array.from({ length: headChecks(ticket).length }, (_, index) => byId(`check${index}`)?.checked);
   if (checks.some((item) => !item)) return showActionErrors(["усі пункти чек-листа"]);
   ticket.checklist = Object.fromEntries(checks.map((value, index) => [index, value]));
@@ -2094,6 +2134,7 @@ async function deleteTicket(id) {
   if (!ticket || currentUser().role !== "admin") return;
   const reason = prompt("Причина видалення заявки");
   if (!reason) return;
+  if (!confirmImportant("Видалити заявку? Вона буде перенесена у видалені.")) return;
   const old = ticket.status;
   ticket.status = STATUSES.deleted;
   ticket.reworkTarget = "";
@@ -2117,6 +2158,7 @@ async function deleteTicket(id) {
 async function headReject(id) {
   const text = prompt("Причина відхилення");
   if (!text) return;
+  if (!confirmImportant("Відхилити заявку? Це фінальний статус.")) return;
   const ticket = state.tickets.find((item) => item.id === id);
   const old = ticket.status;
   ticket.status = STATUSES.rejected;
@@ -2141,6 +2183,7 @@ async function headReject(id) {
 
 async function markPaid(id) {
   const ticket = state.tickets.find((item) => item.id === id);
+  if (!confirmImportant("Підтвердити, що повернення коштів здійснено?")) return;
   if (needsPaymentDetails(ticket)) {
     const missing = ["iban", "taxId", "receiverName"].filter((key) => !ticket[key]);
     if (missing.length) return showActionErrors(["реквізити"]);
@@ -2770,6 +2813,14 @@ function autoTime(input) {
   input.value = digits.length > 2 ? `${digits.slice(0, 2)}:${digits.slice(2)}` : digits;
 }
 
+function autoIban(input) {
+  input.value = input.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 29);
+}
+
+function autoTaxId(input) {
+  input.value = input.value.replace(/\D/g, "").slice(0, 10);
+}
+
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
 }
@@ -2791,6 +2842,8 @@ Object.assign(window, {
   addTicketComment,
   addUser,
   autoDate,
+  autoIban,
+  autoTaxId,
   autoTime,
   clearSaveErrors,
   copyText,
