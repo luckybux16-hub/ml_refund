@@ -344,6 +344,44 @@ textarea[readonly] {
   gap: 12px;
 }
 
+.pagination {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.pagination-info {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.pagination-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.pagination-controls button {
+  min-width: 42px;
+  min-height: 38px;
+  padding: 0 12px;
+}
+
+.pagination-controls button.active {
+  background: var(--text);
+  color: #fff;
+}
+
+.pagination-gap {
+  color: var(--muted);
+  font-weight: 800;
+  padding: 0 2px;
+}
+
 .stats-grid {
   display: grid;
   gap: 10px;

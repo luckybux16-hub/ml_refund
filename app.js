@@ -38,6 +38,7 @@ const TYPES = ["Повернення", "Відмова на пошті", "Від
 const BRANDS = ["MOOW", "LEXIE"];
 const PAYMENT_METHODS = ["Оплата на сайті", "На сайті з вирахуванням доставки", "Накладений платіж", "Повна оплата"];
 const FOPS = ["ФОП Тарасова", "ФОП Левицький", "ФОП Кильницька", "ФОП Дротенко", "Оплата на сайті"];
+const TICKETS_PER_PAGE = 20;
 const RETURN_REASONS = [
   "Не сподобалась якість",
   "Не підійшов розмір",
@@ -77,7 +78,7 @@ const app = document.querySelector("#app");
 let state = loadState();
 let sessionUserId = localStorage.getItem("moow_lexie_session");
 let authToken = localStorage.getItem(AUTH_TOKEN_KEY) || "";
-let view = { page: "dashboard", selectedId: null, filter: {}, mine: false, tab: "tickets" };
+let view = { page: "dashboard", selectedId: null, filter: {}, mine: false, tab: "tickets", listPage: 1 };
 let toastTimer = null;
 let remoteConfigPromise = null;
 let remoteClient = null;
@@ -759,6 +760,7 @@ function applyViewFromHash() {
 }
 
 function setPage(page, selectedId = null, tab = "Картка") {
+  if (view.page !== page) view.listPage = 1;
   view.page = page;
   view.selectedId = selectedId;
   view.tab = page === "ticket" ? tab : "Картка";
@@ -1043,6 +1045,7 @@ function renderRoleHero(user) {
 
 function filterByStatus(status) {
   view.filter = {};
+  view.listPage = 1;
   if (status === "overdue") view.filter.overdue = true;
   if (status && Object.values(STATUSES).includes(status)) view.filter.status = status;
   view.page = status && isFinalStatus(status) ? "archive" : "tickets";
@@ -1067,6 +1070,7 @@ function renderTickets(user) {
     </section>
     <section class="section">
       <div id="ticketsGrid" class="grid">${renderTicketList(tickets)}</div>
+      <div id="ticketsPager">${renderTicketPagination(tickets)}</div>
     </section>
   `;
 }
@@ -1088,12 +1092,52 @@ function renderArchive(user) {
     </section>
     <section class="section">
       <div id="ticketsGrid" class="grid">${renderTicketList(tickets)}</div>
+      <div id="ticketsPager">${renderTicketPagination(tickets)}</div>
     </section>
   `;
 }
 
 function renderTicketList(tickets = (view.page === "archive" ? archiveTickets() : activeTickets())) {
-  return tickets.length ? tickets.map(renderTicketCard).join("") : `<div class="empty">Нічого не знайдено</div>`;
+  if (!tickets.length) return `<div class="empty">Нічого не знайдено</div>`;
+  const page = currentListPage(tickets);
+  const start = (page - 1) * TICKETS_PER_PAGE;
+  return tickets.slice(start, start + TICKETS_PER_PAGE).map(renderTicketCard).join("");
+}
+
+function listPageCount(tickets) {
+  return Math.max(1, Math.ceil(tickets.length / TICKETS_PER_PAGE));
+}
+
+function currentListPage(tickets) {
+  const totalPages = listPageCount(tickets);
+  const page = Math.min(Math.max(1, Number(view.listPage) || 1), totalPages);
+  view.listPage = page;
+  return page;
+}
+
+function renderTicketPagination(tickets = (view.page === "archive" ? archiveTickets() : activeTickets())) {
+  if (tickets.length <= TICKETS_PER_PAGE) return "";
+  const totalPages = listPageCount(tickets);
+  const page = currentListPage(tickets);
+  const start = (page - 1) * TICKETS_PER_PAGE + 1;
+  const end = Math.min(page * TICKETS_PER_PAGE, tickets.length);
+  const pages = Array.from({ length: totalPages }, (_, index) => index + 1)
+    .filter((item) => item === 1 || item === totalPages || Math.abs(item - page) <= 1);
+  const buttons = [];
+  pages.forEach((item, index) => {
+    if (index && item - pages[index - 1] > 1) buttons.push(`<span class="pagination-gap">...</span>`);
+    buttons.push(`<button class="${item === page ? "active" : ""}" onclick="setTicketPage(${item})">${item}</button>`);
+  });
+  return `
+    <div class="pagination">
+      <div class="pagination-info">Показано ${start}-${end} з ${tickets.length}</div>
+      <div class="pagination-controls">
+        <button class="ghost" ${page === 1 ? "disabled" : ""} onclick="setTicketPage(${page - 1})">Назад</button>
+        ${buttons.join("")}
+        <button class="ghost" ${page === totalPages ? "disabled" : ""} onclick="setTicketPage(${page + 1})">Далі</button>
+      </div>
+    </div>
+  `;
 }
 
 function refreshTicketList() {
@@ -1102,19 +1146,29 @@ function refreshTicketList() {
     render();
     return;
   }
-  grid.innerHTML = renderTicketList();
+  const tickets = view.page === "archive" ? archiveTickets() : activeTickets();
+  grid.innerHTML = renderTicketList(tickets);
+  const pager = byId("ticketsPager");
+  if (pager) pager.innerHTML = renderTicketPagination(tickets);
   hydrateInlineActions(grid);
 }
 
 function setFilter(key, value) {
   view.filter[key] = value;
-  if (view.page === "tickets") refreshTicketList();
+  view.listPage = 1;
+  if (view.page === "tickets" || view.page === "archive") refreshTicketList();
   else render();
 }
 
 function toggleMine() {
   view.mine = !view.mine;
+  view.listPage = 1;
   render();
+}
+
+function setTicketPage(page) {
+  view.listPage = Math.max(1, Number(page) || 1);
+  refreshTicketList();
 }
 
 function option(value, label, selected = "") {
