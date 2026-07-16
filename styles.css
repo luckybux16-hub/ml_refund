@@ -382,6 +382,85 @@ textarea[readonly] {
   padding: 0 2px;
 }
 
+.export-panel {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid #b9ddff;
+  border-radius: var(--radius);
+  background: #eef7ff;
+}
+
+.export-panel span {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.export-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.export-actions button {
+  min-height: 38px;
+  padding: 0 12px;
+}
+
+.ticket-select {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.ticket-select input {
+  width: 18px;
+  min-height: 18px;
+  padding: 0;
+}
+
+.directory-list {
+  display: grid;
+  gap: 10px;
+}
+
+.directory-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+}
+
+.directory-row b {
+  display: block;
+  margin-bottom: 7px;
+}
+
+.directory-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.directory-actions button {
+  min-height: 38px;
+  padding: 0 12px;
+}
+
 .stats-grid {
   display: grid;
   gap: 10px;
@@ -558,6 +637,11 @@ textarea[readonly] {
   gap: 8px;
   justify-content: space-between;
   align-items: flex-start;
+}
+
+.ticket-main {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .ticket-status-stack {
@@ -1146,6 +1230,15 @@ textarea[readonly] {
 
   .nav {
     padding-bottom: 8px;
+  }
+
+  .directory-row {
+    grid-template-columns: 1fr;
+  }
+
+  .directory-actions button,
+  .export-actions button {
+    flex: 1 1 140px;
   }
 
   .copy-row {

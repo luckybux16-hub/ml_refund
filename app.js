@@ -84,13 +84,14 @@ let remoteConfigPromise = null;
 let remoteClient = null;
 let saveStatus = { state: "saved", text: "Усі зміни збережено" };
 let connectionStatus = navigator.onLine ? "online" : "offline";
+let selectedPaymentTicketIds = new Set();
 
 function loadState() {
   const raw = localStorage.getItem(STORAGE_KEY);
   if (raw) return normalizeState(JSON.parse(raw));
   const initial = {
     users: DEFAULT_USERS,
-    fops: FOPS,
+    fops: FOPS.map((name) => ({ name, payerIban: "" })),
     reasons: RETURN_REASONS,
     preShipmentReasons: PRE_SHIPMENT_REASONS,
     tickets: [],
@@ -105,7 +106,7 @@ function loadState() {
 function normalizeState(saved) {
   saved.preShipmentReasons = saved.preShipmentReasons || PRE_SHIPMENT_REASONS;
   saved.reasons = saved.reasons || RETURN_REASONS;
-  saved.fops = saved.fops || FOPS;
+  saved.fops = normalizeFops(saved.fops || FOPS);
   saved.users = saved.users || DEFAULT_USERS;
   saved.tickets = saved.tickets || [];
   saved.logs = saved.logs || [];
@@ -115,6 +116,24 @@ function normalizeState(saved) {
     if (ticket.stockOfferConfirmed == null) ticket.stockOfferConfirmed = false;
   });
   return saved;
+}
+
+function normalizeFops(items = []) {
+  return items.map((item) => {
+    if (typeof item === "string") return { name: item, payerIban: "" };
+    return {
+      name: item.name || "",
+      payerIban: item.payerIban || item.payer_iban || "",
+    };
+  }).filter((item) => item.name);
+}
+
+function fopNames() {
+  return normalizeFops(state.fops).map((item) => item.name);
+}
+
+function findFop(name) {
+  return normalizeFops(state.fops).find((item) => item.name === name) || { name, payerIban: "" };
 }
 
 function saveState() {
@@ -427,7 +446,7 @@ function applyRemotePayload(payload) {
   state.tickets = (payload.tickets || []).map((ticket) => ticketFromApi(ticket, commentGroups[ticket.id] || []));
   state.logs = (payload.logs || []).map(logFromApi);
   state.loginEvents = (payload.loginEvents || []).map(loginEventFromApi);
-  state.fops = (payload.fops || []).map((item) => item.name);
+  state.fops = normalizeFops(payload.fops || []);
   state.reasons = (payload.reasons || []).filter((item) => item.reason_type === "regular").map((item) => item.name);
   state.preShipmentReasons = (payload.reasons || []).filter((item) => item.reason_type === "pre_shipment").map((item) => item.name);
   saveState();
@@ -1063,12 +1082,13 @@ function renderTickets(user) {
         <select onchange="setFilter('status', this.value)">${option("", "Статус")}${Object.values(STATUSES).map((s) => option(s, s, view.filter.status)).join("")}</select>
         <select onchange="setFilter('type', this.value)">${option("", "Тип")}${TYPES.map((t) => option(t, t, view.filter.type)).join("")}</select>
         <button class="ghost" onclick="toggleMine()">${view.mine ? "Усі доступні" : "Мої заявки"}</button>
-        <select onchange="setFilter('fop', this.value)">${option("", "ФОП")}${state.fops.map((fop) => option(fop, fop, view.filter.fop)).join("")}</select>
+        <select onchange="setFilter('fop', this.value)">${option("", "ФОП")}${fopNames().map((fop) => option(fop, fop, view.filter.fop)).join("")}</select>
         <select onchange="setFilter('paymentMethod', this.value)">${option("", "Спосіб оплати")}${PAYMENT_METHODS.map((method) => option(method, method, view.filter.paymentMethod)).join("")}</select>
         ${canCreateTicket(user) ? `<button onclick="setPage('create')">Створити повернення</button>` : ""}
       </div>
     </section>
     <section class="section">
+      <div id="paymentExportPanelSlot">${renderPaymentExportPanel(user, tickets)}</div>
       <div id="ticketsGrid" class="grid">${renderTicketList(tickets)}</div>
       <div id="ticketsPager">${renderTicketPagination(tickets)}</div>
     </section>
@@ -1086,7 +1106,7 @@ function renderArchive(user) {
         <select onchange="setFilter('status', this.value)">${option("", "Статус")}${[STATUSES.paid, STATUSES.doneNoRefund, STATUSES.rejected].map((s) => option(s, s, view.filter.status)).join("")}</select>
         <select onchange="setFilter('type', this.value)">${option("", "Тип")}${TYPES.map((t) => option(t, t, view.filter.type)).join("")}</select>
         <button class="ghost" onclick="toggleMine()">${view.mine ? "Усі доступні" : "Мої заявки"}</button>
-        <select onchange="setFilter('fop', this.value)">${option("", "ФОП")}${state.fops.map((fop) => option(fop, fop, view.filter.fop)).join("")}</select>
+        <select onchange="setFilter('fop', this.value)">${option("", "ФОП")}${fopNames().map((fop) => option(fop, fop, view.filter.fop)).join("")}</select>
         <select onchange="setFilter('paymentMethod', this.value)">${option("", "Спосіб оплати")}${PAYMENT_METHODS.map((method) => option(method, method, view.filter.paymentMethod)).join("")}</select>
       </div>
     </section>
@@ -1147,6 +1167,8 @@ function refreshTicketList() {
     return;
   }
   const tickets = view.page === "archive" ? archiveTickets() : activeTickets();
+  const exportPanelSlot = byId("paymentExportPanelSlot");
+  if (exportPanelSlot) exportPanelSlot.innerHTML = renderPaymentExportPanel(currentUser(), tickets);
   grid.innerHTML = renderTicketList(tickets);
   const pager = byId("ticketsPager");
   if (pager) pager.innerHTML = renderTicketPagination(tickets);
@@ -1171,15 +1193,146 @@ function setTicketPage(page) {
   refreshTicketList();
 }
 
+function canUsePaymentExport(user = currentUser()) {
+  return user && ["accountant", "admin"].includes(user.role) && view.page === "tickets";
+}
+
+function canSelectForPaymentExport(ticket, user = currentUser()) {
+  return canUsePaymentExport(user) && ticket.status === STATUSES.money && canSeeTicket(user, ticket);
+}
+
+function renderPaymentExportPanel(user, tickets) {
+  if (!canUsePaymentExport(user)) return "";
+  const eligible = tickets.filter((ticket) => canSelectForPaymentExport(ticket, user));
+  if (!eligible.length) return "";
+  const selected = eligible.filter((ticket) => selectedPaymentTicketIds.has(ticket.id));
+  return `
+    <div id="paymentExportPanel" class="export-panel">
+      <div>
+        <b>Реєстр Monobank</b>
+        <span>Обрано ${selected.length} з ${eligible.length}</span>
+      </div>
+      <div class="export-actions">
+        <button class="ghost" onclick="selectVisiblePaymentTickets()">Обрати видимі</button>
+        <button class="ghost" onclick="clearPaymentSelection()">Очистити</button>
+        <button ${selected.length ? "" : "disabled"} onclick="exportMonobankPayments()">Експорт Monobank</button>
+      </div>
+    </div>
+  `;
+}
+
+function currentPagedTickets() {
+  const tickets = view.page === "archive" ? archiveTickets() : activeTickets();
+  const page = currentListPage(tickets);
+  const start = (page - 1) * TICKETS_PER_PAGE;
+  return tickets.slice(start, start + TICKETS_PER_PAGE);
+}
+
+function togglePaymentTicket(id, checked) {
+  if (checked) selectedPaymentTicketIds.add(id);
+  else selectedPaymentTicketIds.delete(id);
+  refreshTicketList();
+}
+
+function selectVisiblePaymentTickets() {
+  currentPagedTickets().filter((ticket) => canSelectForPaymentExport(ticket)).forEach((ticket) => selectedPaymentTicketIds.add(ticket.id));
+  refreshTicketList();
+}
+
+function clearPaymentSelection() {
+  selectedPaymentTicketIds.clear();
+  refreshTicketList();
+}
+
+function selectedPaymentTickets() {
+  return activeTickets().filter((ticket) => canSelectForPaymentExport(ticket) && selectedPaymentTicketIds.has(ticket.id));
+}
+
+function monobankExportErrors(tickets) {
+  const errors = [];
+  tickets.forEach((ticket) => {
+    const label = ticket.crmId || ticket.orderNumber || ticket.id;
+    const payerFop = ticket.managerFop || ticket.warehouseFop;
+    const payerIban = findFop(payerFop).payerIban || "";
+    const missing = [];
+    if (!payerIban) missing.push(`IBAN платника для ${payerFop || "ФОП"}`);
+    if (payerIban && !isValidIban(payerIban)) missing.push("коректний IBAN платника");
+    if (!Number(finalAmount(ticket) || 0)) missing.push("сума до виплати");
+    if (!ticket.iban) missing.push("IBAN отримувача");
+    if (ticket.iban && !isValidIban(ticket.iban)) missing.push("коректний IBAN отримувача");
+    if (!ticket.receiverName) missing.push("ПІБ отримувача");
+    if (!ticket.taxId) missing.push("ІПН");
+    if (ticket.taxId && !/^\d{10}$/.test(ticket.taxId)) missing.push("коректний ІПН");
+    if (!(ticket.paymentPurpose || paymentPurpose(ticket))) missing.push("призначення платежу");
+    if (missing.length) errors.push(`${label}: ${missing.join(", ")}`);
+  });
+  return errors;
+}
+
+function exportMonobankPayments() {
+  const tickets = selectedPaymentTickets();
+  if (!tickets.length) {
+    alert("Оберіть заявки для експорту.");
+    return;
+  }
+  if (!window.XLSX) {
+    alert("Бібліотека Excel ще не завантажилась. Оновіть сторінку і спробуйте ще раз.");
+    return;
+  }
+  const errors = monobankExportErrors(tickets);
+  if (errors.length) {
+    alert(`Не можна створити реєстр. Заповніть дані:\n\n${errors.join("\n")}`);
+    return;
+  }
+  const rows = [
+    ["№", "IBAN платника", "Сума", "Валюта (UAH/USD/EUR)", "IBAN отримувача", "Назва отримувача", "Ідентифікаційний код отримувача", "Призначення платежу"],
+    ...tickets.map((ticket, index) => {
+      const payerFop = ticket.managerFop || ticket.warehouseFop;
+      return [
+        index + 1,
+        findFop(payerFop).payerIban,
+        Number(finalAmount(ticket).toFixed(2)),
+        "UAH",
+        ticket.iban,
+        ticket.receiverName,
+        ticket.taxId,
+        ticket.paymentPurpose || paymentPurpose(ticket),
+      ];
+    }),
+  ];
+  const worksheet = XLSX.utils.aoa_to_sheet(rows);
+  worksheet["!cols"] = [
+    { wch: 6 },
+    { wch: 34 },
+    { wch: 12 },
+    { wch: 18 },
+    { wch: 34 },
+    { wch: 28 },
+    { wch: 28 },
+    { wch: 52 },
+  ];
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "payments");
+  XLSX.writeFile(workbook, `monobank-payments-${todayKey()}.xlsx`);
+  showToast("Файл створено");
+}
+
 function option(value, label, selected = "") {
   return `<option value="${escapeHtml(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(label)}</option>`;
 }
 
 function renderTicketCard(ticket) {
+  const selectable = canSelectForPaymentExport(ticket);
+  const selected = selectedPaymentTicketIds.has(ticket.id);
   return `
     <article class="ticket-card" onclick="setPage('ticket','${ticket.id}')">
       <div class="ticket-top">
-        <div>
+        ${selectable ? `
+          <label class="ticket-select" onclick="event.stopPropagation()">
+            <input type="checkbox" ${selected ? "checked" : ""} onchange="togglePaymentTicket('${ticket.id}', this.checked)" />
+          </label>
+        ` : ""}
+        <div class="ticket-main">
           <div class="ticket-title">${ticket.crmId || "Чернетка"} · ${orderNumberLabel(ticket)}</div>
           <div class="meta">${ticket.brand} · ${ticket.type} · ${formatDateTime(ticket.createdAt)}</div>
         </div>
@@ -1271,7 +1424,7 @@ function renderTicketForm(user) {
       <section class="panel">
         <h3>Інформація складу</h3>
         <div class="form-grid">
-          ${selectField("warehouseFop", "ФОП", state.fops, "")}
+          ${selectField("warehouseFop", "ФОП", fopNames(), "")}
           ${inputField("returnedProduct", "Товар", "text")}
           <div id="createMoneyFields" class="form-grid full">
             ${inputField("returnAmount", "Сума повернення", "number", "", false, `oninput="updateCreateVisibility()"`)}
@@ -1562,7 +1715,7 @@ function renderWarehouseDraftEditor(ticket) {
         ${brandSelectControl("draftBrand", "Бренд", ticket.brand, `onchange="updateDraftVisibility(); updateBrandSelectTheme()"`)}
         ${selectField("draftType", "Тип заявки", TYPES, ticket.type, `onchange="updateDraftVisibility()"`)}
         ${editableInput("draftOrderNumber", "Номер замовлення", "number", ticket.orderNumber, true)}
-        ${editableSelect("draftWarehouseFop", "ФОП", state.fops, ticket.warehouseFop, true)}
+        ${editableSelect("draftWarehouseFop", "ФОП", fopNames(), ticket.warehouseFop, true)}
         ${editableInput("draftReturnedProduct", "Товар", "text", ticket.returnedProduct, true)}
         <div id="draftMoneyFields" class="form-grid full">
           ${editableInput("draftReturnAmount", "Сума повернення", "number", ticket.returnAmount, true, `oninput="updateDraftVisibility()"`)}
@@ -1592,7 +1745,7 @@ function renderManagerBlock(user, ticket, readonly) {
       <h3>Інформація менеджера</h3>
       ${canSwitchToExchange(ticket) ? `<div class="manager-type-box"><div class="field" style="margin:0;">${editableSelect("managerType", "Тип заявки", managerTypeOptions(ticket), ticket.type, canEdit, `onchange="switchManagerType('${ticket.id}', this.value)"`)}</div><div class="hint">Якщо потрібен обмін - ставимо обмін</div></div>` : ""}
       <div class="form-grid">
-        ${editableSelect("managerFop", "Обрати ФОП", state.fops, ticket.managerFop, canEdit)}
+        ${editableSelect("managerFop", "Обрати ФОП", fopNames(), ticket.managerFop, canEdit)}
         ${ticket.type !== "Відмова на пошті" ? editableInput("orderDate", "Дата оформлення", "text", ticket.orderDate, canEdit, `inputmode="numeric" maxlength="10" placeholder="ДД.ММ.РРРР" oninput="autoDate(this)"`) + editableInput("orderTime", "Час оформлення", "text", ticket.orderTime, canEdit, `inputmode="numeric" maxlength="5" placeholder="ГГ:ХХ" oninput="autoTime(this)"`) : ""}
         ${editableInput("clientName", "ПІБ клієнта", "text", ticket.clientName, canEdit)}
         ${editableSelect("reason", "Причина", reasons, ticket.reason, canEdit, `onchange="saveTicketEdits('${ticket.id}', true); render()"`)}
@@ -2564,7 +2717,20 @@ function renderDirectories() {
     <section class="section panel">
       <h2>Довідники</h2>
       <h3>ФОП</h3>
-      ${state.fops.map((item) => `<div class="copy-row"><b>${escapeHtml(item)}</b><button class="ghost" onclick="removeDirectoryItem('fops','${escapeAttr(item)}')">Видалити</button></div>`).join("")}
+      <div class="directory-list">
+        ${normalizeFops(state.fops).map((item, index) => `
+          <div class="directory-row">
+            <div>
+              <b>${escapeHtml(item.name)}</b>
+              <input id="fopIban-${index}" value="${escapeHtml(item.payerIban || "")}" placeholder="IBAN платника" oninput="autoIban(this)" />
+            </div>
+            <div class="directory-actions">
+              <button class="ghost" onclick="saveFopPayerIban('${escapeAttr(item.name)}', 'fopIban-${index}')">Зберегти IBAN</button>
+              <button class="ghost" onclick="removeDirectoryItem('fops','${escapeAttr(item.name)}')">Видалити</button>
+            </div>
+          </div>
+        `).join("")}
+      </div>
       <div class="toolbar section"><input id="newFop" placeholder="Новий ФОП" /><button onclick="addDirectoryItem('fops','newFop')">Додати</button></div>
       <h3 class="section">Причини повернення</h3>
       ${state.reasons.map((item) => `<div class="copy-row"><b>${escapeHtml(item)}</b><button class="ghost" onclick="removeDirectoryItem('reasons','${escapeAttr(item)}')">Видалити</button></div>`).join("")}
@@ -2680,20 +2846,74 @@ async function downloadBackup() {
   }
 }
 
-function addDirectoryItem(key, inputId) {
-  const value = byId(inputId).value.trim();
-  if (!value || state[key].includes(value)) return;
-  state[key].push(value);
-  logAction(null, `оновлено довідник ${key}`, "", value);
-  saveState();
-  render();
+async function saveRemoteDirectory(action, payload) {
+  if (!isRemoteSession()) return;
+  const response = await fetch("/api/directories", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${authToken}`,
+    },
+    body: JSON.stringify({ action, ...payload }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.error || "Не вдалося зберегти довідник");
 }
 
-function removeDirectoryItem(key, value) {
-  state[key] = state[key].filter((item) => item !== value);
-  logAction(null, `оновлено довідник ${key}`, value, "");
-  saveState();
-  render();
+async function addDirectoryItem(key, inputId) {
+  const value = byId(inputId).value.trim();
+  if (!value) return;
+  if (key === "fops") {
+    if (fopNames().includes(value)) return;
+    state.fops.push({ name: value, payerIban: "" });
+  } else {
+    if (state[key].includes(value)) return;
+    state[key].push(value);
+  }
+  try {
+    await saveRemoteDirectory("add", { key, name: value });
+    if (isRemoteSession()) await loadRemoteData();
+    logAction(null, `оновлено довідник ${key}`, "", value);
+    saveState();
+    render();
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+async function removeDirectoryItem(key, value) {
+  if (key === "fops") state.fops = normalizeFops(state.fops).filter((item) => item.name !== value);
+  else state[key] = state[key].filter((item) => item !== value);
+  try {
+    await saveRemoteDirectory("remove", { key, name: value });
+    if (isRemoteSession()) await loadRemoteData();
+    logAction(null, `оновлено довідник ${key}`, value, "");
+    saveState();
+    render();
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+async function saveFopPayerIban(name, inputId) {
+  const input = byId(inputId);
+  const payerIban = (input?.value || "").trim().toUpperCase();
+  const fop = findFop(name);
+  if (payerIban && !isValidIban(payerIban)) {
+    alert("IBAN платника має починатися з UA та містити 29 символів.");
+    return;
+  }
+  state.fops = normalizeFops(state.fops).map((item) => item.name === name ? { ...item, payerIban } : item);
+  try {
+    await saveRemoteDirectory("updateFopIban", { name, payerIban });
+    if (isRemoteSession()) await loadRemoteData();
+    logAction(null, "оновлено IBAN платника ФОП", fop.payerIban || "", payerIban);
+    saveState();
+    showToast("Збережено");
+    render();
+  } catch (error) {
+    alert(error.message);
+  }
 }
 
 async function addUser() {
@@ -2875,6 +3095,10 @@ function autoIban(input) {
   input.value = input.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 29);
 }
 
+function isValidIban(value) {
+  return /^UA[A-Z0-9]{27}$/.test(String(value || "").trim().toUpperCase());
+}
+
 function autoTaxId(input) {
   input.value = input.value.replace(/\D/g, "").slice(0, 10);
 }
@@ -2904,11 +3128,13 @@ Object.assign(window, {
   autoTaxId,
   autoTime,
   clearSaveErrors,
+  clearPaymentSelection,
   copyText,
   copyTicketLink,
   deleteTicket,
   deleteDraft,
   downloadBackup,
+  exportMonobankPayments,
   exportStatsCsv,
   filterByStatus,
   headApprove,
@@ -2925,9 +3151,12 @@ Object.assign(window, {
   refreshLoginEvents,
   resetDemo,
   saveNewTicket,
+  saveFopPayerIban,
   saveTicketEdits,
   saveWarehouseDraft,
+  selectVisiblePaymentTickets,
   setFilter,
+  togglePaymentTicket,
   setLoginEventFilter,
   setPage,
   setTicketTab,
