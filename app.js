@@ -37,6 +37,8 @@ const STATUS_CLASS = {
 const TYPES = ["Повернення", "Відмова на пошті", "Відмова до відправки", "Обмін"];
 const BRANDS = ["MOOW", "LEXIE"];
 const PAYMENT_METHODS = ["Оплата на сайті", "На сайті з вирахуванням доставки", "Накладений платіж", "Повна оплата"];
+const PAYMENT_METHODS_WITHOUT_SITE = PAYMENT_METHODS.filter((method) => method !== "Оплата на сайті");
+const PAYMENT_FILTER_WITHOUT_SITE = "__without_site_payment__";
 const FOPS = ["ФОП Тарасова", "ФОП Левицький", "ФОП Кильницька", "ФОП Дротенко", "Оплата на сайті"];
 const TICKETS_PER_PAGE = 20;
 const RETURN_REASONS = [
@@ -720,7 +722,8 @@ function applyFilters(ticket) {
   if (f.status && ticket.status !== f.status) return false;
   if (f.type && ticket.type !== f.type) return false;
   if (f.fop && ticket.managerFop !== f.fop && ticket.warehouseFop !== f.fop) return false;
-  if (f.paymentMethod && ticket.paymentMethod !== f.paymentMethod) return false;
+  if (f.paymentMethod === PAYMENT_FILTER_WITHOUT_SITE && !PAYMENT_METHODS_WITHOUT_SITE.includes(ticket.paymentMethod)) return false;
+  if (f.paymentMethod && f.paymentMethod !== PAYMENT_FILTER_WITHOUT_SITE && ticket.paymentMethod !== f.paymentMethod) return false;
   if (f.overdue && !isOverdueTicket(ticket)) return false;
   if (f.manager && ticket.managerUserId !== f.manager) return false;
   if (f.reason && ticket.reason !== f.reason) return false;
@@ -1083,7 +1086,7 @@ function renderTickets(user) {
         <select onchange="setFilter('type', this.value)">${option("", "Тип")}${TYPES.map((t) => option(t, t, view.filter.type)).join("")}</select>
         <button class="ghost" onclick="toggleMine()">${view.mine ? "Усі доступні" : "Мої заявки"}</button>
         <select onchange="setFilter('fop', this.value)">${option("", "ФОП")}${fopNames().map((fop) => option(fop, fop, view.filter.fop)).join("")}</select>
-        <select onchange="setFilter('paymentMethod', this.value)">${option("", "Спосіб оплати")}${PAYMENT_METHODS.map((method) => option(method, method, view.filter.paymentMethod)).join("")}</select>
+        <select onchange="setFilter('paymentMethod', this.value)">${paymentMethodFilterOptions()}</select>
         ${canCreateTicket(user) ? `<button onclick="setPage('create')">Створити повернення</button>` : ""}
       </div>
     </section>
@@ -1107,7 +1110,7 @@ function renderArchive(user) {
         <select onchange="setFilter('type', this.value)">${option("", "Тип")}${TYPES.map((t) => option(t, t, view.filter.type)).join("")}</select>
         <button class="ghost" onclick="toggleMine()">${view.mine ? "Усі доступні" : "Мої заявки"}</button>
         <select onchange="setFilter('fop', this.value)">${option("", "ФОП")}${fopNames().map((fop) => option(fop, fop, view.filter.fop)).join("")}</select>
-        <select onchange="setFilter('paymentMethod', this.value)">${option("", "Спосіб оплати")}${PAYMENT_METHODS.map((method) => option(method, method, view.filter.paymentMethod)).join("")}</select>
+        <select onchange="setFilter('paymentMethod', this.value)">${paymentMethodFilterOptions()}</select>
       </div>
     </section>
     <section class="section">
@@ -1319,6 +1322,14 @@ function exportMonobankPayments() {
 
 function option(value, label, selected = "") {
   return `<option value="${escapeHtml(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(label)}</option>`;
+}
+
+function paymentMethodFilterOptions() {
+  return [
+    option("", "Спосіб оплати", view.filter.paymentMethod),
+    option(PAYMENT_FILTER_WITHOUT_SITE, "Все, крім оплати на сайті", view.filter.paymentMethod),
+    ...PAYMENT_METHODS.map((method) => option(method, method, view.filter.paymentMethod)),
+  ].join("");
 }
 
 function renderTicketCard(ticket) {
