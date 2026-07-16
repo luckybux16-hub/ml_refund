@@ -81,6 +81,8 @@ create table if not exists public.tickets (
   accountant_user_id uuid references public.app_users(id),
   updated_by uuid references public.app_users(id),
   paid_at timestamptz,
+  monobank_exported_at timestamptz,
+  monobank_exported_by uuid references public.app_users(id),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

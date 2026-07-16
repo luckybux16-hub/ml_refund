@@ -307,6 +307,8 @@ function ticketFromApi(ticket, comments = []) {
     accountantUserId: ticket.accountant_user_id || "",
     updatedBy: ticket.updated_by || "",
     paidAt: ticket.paid_at || "",
+    monobankExportedAt: ticket.monobank_exported_at || "",
+    monobankExportedBy: ticket.monobank_exported_by || "",
     reworkTarget: ticket.rework_target || "",
   };
 }
@@ -351,6 +353,8 @@ function ticketToApi(ticket) {
     accountant_user_id: ticket.accountantUserId || null,
     updated_by: ticket.updatedBy || null,
     paid_at: ticket.paidAt || null,
+    monobank_exported_at: ticket.monobankExportedAt || null,
+    monobank_exported_by: ticket.monobankExportedBy || null,
     rework_target: ticket.reworkTarget || "",
   };
 }
@@ -1219,6 +1223,7 @@ function renderPaymentExportPanel(user, tickets) {
         <button class="ghost" onclick="selectVisiblePaymentTickets()">Обрати видимі</button>
         <button class="ghost" onclick="clearPaymentSelection()">Очистити</button>
         <button ${selected.length ? "" : "disabled"} onclick="exportMonobankPayments()">Експорт Monobank</button>
+        <button ${selected.length ? "" : "disabled"} onclick="markSelectedPaymentsPaid()">Повернення здійснено</button>
       </div>
     </div>
   `;
@@ -1272,7 +1277,7 @@ function monobankExportErrors(tickets) {
   return errors;
 }
 
-function exportMonobankPayments() {
+async function exportMonobankPayments() {
   const tickets = selectedPaymentTickets();
   if (!tickets.length) {
     alert("Оберіть заявки для експорту.");
@@ -1317,7 +1322,67 @@ function exportMonobankPayments() {
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, "payments");
   XLSX.writeFile(workbook, `monobank-payments-${todayKey()}.xlsx`);
-  showToast("Файл створено");
+  try {
+    await markTicketsMonobankExported(tickets);
+    showToast("Файл створено");
+    refreshTicketList();
+  } catch (error) {
+    alert(`Файл скачано, але CRM не змогла зберегти позначку реєстру. Спробуйте оновити сторінку або скачати реєстр ще раз.\n\n${error.message || ""}`);
+  }
+}
+
+async function markTicketsMonobankExported(tickets) {
+  const exportedAt = nowIso();
+  const exportedBy = currentUser().id;
+  for (const ticket of tickets) {
+    ticket.monobankExportedAt = exportedAt;
+    ticket.monobankExportedBy = exportedBy;
+    ticket.updatedAt = nowIso();
+    ticket.updatedBy = exportedBy;
+    logAction(ticket, "скачано реєстр Monobank", "", exportedAt);
+    if (isRemoteSession()) await remoteTicketAction("markMonobankExported", ticket);
+  }
+  if (isRemoteSession()) await loadRemoteData();
+  saveState();
+}
+
+function selectedNotExportedTickets(tickets) {
+  return tickets.filter((ticket) => !ticket.monobankExportedAt);
+}
+
+async function markSelectedPaymentsPaid() {
+  const tickets = selectedPaymentTickets();
+  if (!tickets.length) {
+    alert("Оберіть заявки.");
+    return;
+  }
+  const notExported = selectedNotExportedTickets(tickets);
+  if (notExported.length) {
+    alert(`Не можна масово змінити статус. Спочатку скачайте реєстр для заявок:\n\n${notExported.map((ticket) => ticket.crmId || ticket.orderNumber || ticket.id).join("\n")}`);
+    return;
+  }
+  if (!confirmImportant(`Підтвердити повернення коштів для ${tickets.length} заявок?`)) return;
+  const user = currentUser();
+  try {
+    for (const ticket of tickets) {
+      const old = ticket.status;
+      ticket.status = STATUSES.paid;
+      ticket.reworkTarget = "";
+      ticket.accountantUserId = user.id;
+      ticket.paidAt = nowIso();
+      ticket.updatedAt = nowIso();
+      ticket.updatedBy = user.id;
+      logAction(ticket, "проведено повернення коштів", old, ticket.status);
+      if (isRemoteSession()) await remoteTicketAction("markPaid", ticket);
+    }
+    selectedPaymentTicketIds.clear();
+    if (isRemoteSession()) await loadRemoteData();
+    saveState();
+    render();
+    showToast("Статус оновлено");
+  } catch (error) {
+    alert(error.message || "Не вдалося оновити статус");
+  }
 }
 
 function option(value, label, selected = "") {
@@ -1355,6 +1420,7 @@ function renderTicketCard(ticket) {
         <div><span>Фінальна сума</span><b>${hasWarehouseMoney(ticket) || isPreShipmentRefusal(ticket) ? money(finalAmount(ticket)) : "—"}</b></div>
         <div><span>Відповідальний</span><b>${responsibleName(ticket)}</b></div>
         <div><span>Очікується дія від</span>${expectedActionBadge(ticket)}</div>
+        ${canUsePaymentExport() && ticket.status === STATUSES.money ? `<div><span>Реєстр Monobank</span><b>${ticket.monobankExportedAt ? "скачано" : "не скачано"}</b></div>` : ""}
       </div>
     </article>
   `;
@@ -3157,6 +3223,7 @@ Object.assign(window, {
   managerSubmit,
   managerReworkWarehouse,
   markPaid,
+  markSelectedPaymentsPaid,
   removeDirectoryItem,
   render,
   refreshLoginEvents,

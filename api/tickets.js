@@ -214,6 +214,19 @@ export default async function handler(req, res) {
       return json(res, 200, { ticket: saved });
     }
 
+    if (action === "markMonobankExported") {
+      if (!["accountant", "admin"].includes(profile.role)) return json(res, 403, { error: "Forbidden" });
+      const exportedAt = ticket.monobank_exported_at || new Date().toISOString();
+      const saved = await saveTicket(supabase, {
+        ...ticket,
+        monobank_exported_at: exportedAt,
+        monobank_exported_by: profile.id,
+        updated_by: profile.id,
+      });
+      await insertLog(supabase, profile, saved, "скачано реєстр Monobank", "", exportedAt);
+      return json(res, 200, { ticket: saved });
+    }
+
     if (action === "deleteDraft") {
       if (!canDeleteDraft(profile, ticket)) return json(res, 403, { error: "Forbidden" });
       const { error } = await supabase.from("tickets").delete().eq("id", ticket.id);
