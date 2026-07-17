@@ -694,7 +694,7 @@ function canSeeTicket(user, ticket) {
     return [STATUSES.new].includes(ticket.status) || (ticket.status === STATUSES.rework && ticket.reworkTarget !== "warehouse") || ticket.managerUserId === user.id;
   }
   if (user.role === "accountant") {
-    return [STATUSES.money, STATUSES.paid].includes(ticket.status);
+    return [STATUSES.money, STATUSES.paid, STATUSES.doneNoRefund, STATUSES.rejected].includes(ticket.status);
   }
   return false;
 }
@@ -1418,6 +1418,7 @@ function renderTicketCard(ticket) {
         <div><span>ПІБ</span><b>${ticket.clientName || "—"}</b></div>
         <div><span>Товар</span><b>${ticket.returnedProduct || "—"}</b></div>
         <div><span>Фінальна сума</span><b>${hasWarehouseMoney(ticket) || isPreShipmentRefusal(ticket) ? money(finalAmount(ticket)) : "—"}</b></div>
+        <div><span>Коментар менеджера</span><b>${ticket.managerComment || "—"}</b></div>
         <div><span>Відповідальний</span><b>${responsibleName(ticket)}</b></div>
         <div><span>Очікується дія від</span>${expectedActionBadge(ticket)}</div>
         ${canUsePaymentExport() && ticket.status === STATUSES.money ? `<div><span>Реєстр Monobank</span><b>${ticket.monobankExportedAt ? "скачано" : "не скачано"}</b></div>` : ""}

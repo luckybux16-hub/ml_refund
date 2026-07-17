@@ -42,7 +42,7 @@ export function canSeeTicket(profile, ticket) {
   if (profile.role === "head") return true;
   if (profile.role === "warehouse") return ticket.warehouse_user_id === profile.id || (ticket.status === STATUSES.rework && ticket.rework_target === "warehouse");
   if (profile.role === "manager") return [STATUSES.fresh].includes(ticket.status) || (ticket.status === STATUSES.rework && ticket.rework_target !== "warehouse") || ticket.manager_user_id === profile.id;
-  if (profile.role === "accountant") return [STATUSES.money, STATUSES.paid].includes(ticket.status);
+  if (profile.role === "accountant") return [STATUSES.money, STATUSES.paid, STATUSES.doneNoRefund, STATUSES.rejected].includes(ticket.status);
   return false;
 }
 
