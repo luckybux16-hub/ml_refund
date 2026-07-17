@@ -1397,6 +1397,12 @@ function paymentMethodFilterOptions() {
   ].join("");
 }
 
+function reasonSummary(ticket) {
+  if (!ticket.reason) return "—";
+  if (ticket.reason !== "Інше") return ticket.reason;
+  return ticket.otherReasonComment ? `Інше: ${ticket.otherReasonComment}` : "Інше";
+}
+
 function renderTicketCard(ticket) {
   const selectable = canSelectForPaymentExport(ticket);
   const selected = selectedPaymentTicketIds.has(ticket.id);
@@ -1418,6 +1424,7 @@ function renderTicketCard(ticket) {
         <div><span>ПІБ</span><b>${ticket.clientName || "—"}</b></div>
         <div><span>Товар</span><b>${ticket.returnedProduct || "—"}</b></div>
         <div><span>Фінальна сума</span><b>${hasWarehouseMoney(ticket) || isPreShipmentRefusal(ticket) ? money(finalAmount(ticket)) : "—"}</b></div>
+        <div><span>Причина</span><b>${reasonSummary(ticket)}</b></div>
         <div><span>Коментар менеджера</span><b>${ticket.managerComment || "—"}</b></div>
         <div><span>Відповідальний</span><b>${responsibleName(ticket)}</b></div>
         <div><span>Очікується дія від</span>${expectedActionBadge(ticket)}</div>
